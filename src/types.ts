@@ -12,6 +12,7 @@ export interface Collaborator {
   last_name: string;
   phone?: string;
   email?: string;
+  default_commission_fee?: number;
   created_at: string;
   updated_at?: string;
 }
@@ -22,6 +23,7 @@ export interface Client {
   id: number;
   uuid?: string;
   collaborator_id?: number | null;
+  plan_id?: number | null;
   first_name: string;
   last_name: string;
   tax_code?: string;
@@ -31,6 +33,9 @@ export interface Client {
   billing_cycle: BillingCycle;
   monthly_fee: number;
   installation_fee: number;
+  collaborator_commission_fee?: number;
+  last_payment_date?: string;
+  next_due_date?: string;
   pppoe_username?: string;
   pppoe_password?: string;
   mac_address?: string;
@@ -39,8 +44,32 @@ export interface Client {
   notes?: string;
   created_at: string;
   updated_at?: string;
-  // Joined field for convenience
+  // Joined fields for convenience
   collaborator_name?: string;
+  plan_name?: string | null;
+}
+
+export interface ClientLite {
+  id: number;
+  first_name: string;
+  last_name: string;
+  assigned_ip?: string;
+  mac_address?: string;
+  pppoe_username?: string;
+}
+
+export interface Plan {
+  id: number;
+  uuid?: string;
+  name: string;
+  monthly_fee: number;
+  installation_fee: number;
+  download_mbps?: number | null;
+  upload_mbps?: number | null;
+  description?: string;
+  active: boolean;
+  created_at: string;
+  updated_at?: string;
 }
 
 export type PaymentType = 'INSTALLATION' | 'RECURRING' | 'EXTRA';
@@ -143,4 +172,54 @@ export interface UpdateCheckResult {
   isLatest: boolean;
   releaseUrl: string | null;
   publishedAt: string | null;
+}
+
+export interface MonthlyAnalyticsPoint {
+  month: string; // YYYY-MM
+  revenue: number;
+  newClients: number;
+  overdue: number;
+}
+
+export interface TopClient {
+  id: number;
+  first_name: string;
+  last_name: string;
+  total_paid: number;
+}
+
+export interface CommissionByCollaborator {
+  id: number;
+  first_name: string;
+  last_name: string;
+  pending_amount: number;
+  total_amount: number;
+}
+
+export interface ClientDetail {
+  client: Client;
+  payments: Payment[];
+  commissions: Commission[];
+  stats: { totalPaid: number; totalOverdue: number; overdueCount: number; paymentsCount: number };
+}
+
+export interface EmailTemplate {
+  id: number;
+  uuid?: string;
+  name: string;
+  subject: string;
+  body: string;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface SmtpSettings {
+  enabled: boolean;
+  host: string;
+  port: number;
+  secure: boolean;
+  user: string;
+  hasPassword: boolean;
+  fromName: string;
+  fromEmail: string;
 }

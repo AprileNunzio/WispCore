@@ -19,6 +19,7 @@ function createWindow() {
     height: 900,
     minWidth: 800,
     minHeight: 600,
+    fullscreen: true,
     title: 'WispCore - Software Gestionale WISP (Alynet)',
     autoHideMenuBar: true,
     webPreferences: {
@@ -27,6 +28,13 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: true,
     },
+  });
+
+  // L'app va sempre usata a schermo intero. Se l'utente esce dal fullscreen
+  // (es. Esc su alcuni sistemi) la massimizziamo comunque invece di lasciarla
+  // in una finestra piccola.
+  mainWindow.on('leave-full-screen', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.maximize();
   });
 
   const devServerUrl = process.env.VITE_DEV_SERVER_URL || (!app.isPackaged ? 'http://localhost:5173' : null);

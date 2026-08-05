@@ -25,6 +25,22 @@ CREATE TABLE IF NOT EXISTS collaborators (
   last_name TEXT NOT NULL,
   phone TEXT,
   email TEXT,
+  default_commission_fee REAL NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS plans (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  uuid TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  monthly_fee REAL NOT NULL DEFAULT 0,
+  installation_fee REAL NOT NULL DEFAULT 0,
+  download_mbps INTEGER,
+  upload_mbps INTEGER,
+  description TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   deleted INTEGER NOT NULL DEFAULT 0
@@ -34,6 +50,7 @@ CREATE TABLE IF NOT EXISTS clients (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   uuid TEXT UNIQUE NOT NULL,
   collaborator_id INTEGER,
+  plan_id INTEGER,
   first_name TEXT NOT NULL,
   last_name TEXT NOT NULL,
   tax_code TEXT,
@@ -43,6 +60,9 @@ CREATE TABLE IF NOT EXISTS clients (
   billing_cycle TEXT NOT NULL DEFAULT 'MONTHLY',
   monthly_fee REAL NOT NULL DEFAULT 0,
   installation_fee REAL NOT NULL DEFAULT 0,
+  collaborator_commission_fee REAL NOT NULL DEFAULT 0,
+  last_payment_date TEXT,
+  next_due_date TEXT,
   pppoe_username TEXT,
   pppoe_password_enc TEXT,
   mac_address TEXT,
@@ -52,7 +72,8 @@ CREATE TABLE IF NOT EXISTS clients (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   deleted INTEGER NOT NULL DEFAULT 0,
-  FOREIGN KEY (collaborator_id) REFERENCES collaborators(id)
+  FOREIGN KEY (collaborator_id) REFERENCES collaborators(id),
+  FOREIGN KEY (plan_id) REFERENCES plans(id)
 );
 
 CREATE TABLE IF NOT EXISTS payments (
@@ -103,7 +124,39 @@ CREATE TABLE IF NOT EXISTS outbox (
   created_at TEXT NOT NULL,
   synced INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS email_templates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  uuid TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted INTEGER NOT NULL DEFAULT 0
+);
 `;
+
+/** Adds columns that may be missing on a database created by an older version of the app. */
+function runDefensiveMigrations() {
+  const clientColumns = all("PRAGMA table_info(clients)").map((c) => c.name);
+  if (!clientColumns.includes('collaborator_commission_fee')) {
+    run('ALTER TABLE clients ADD COLUMN collaborator_commission_fee REAL NOT NULL DEFAULT 0');
+  }
+  if (!clientColumns.includes('plan_id')) {
+    run('ALTER TABLE clients ADD COLUMN plan_id INTEGER');
+  }
+  if (!clientColumns.includes('last_payment_date')) {
+    run('ALTER TABLE clients ADD COLUMN last_payment_date TEXT');
+  }
+  if (!clientColumns.includes('next_due_date')) {
+    run('ALTER TABLE clients ADD COLUMN next_due_date TEXT');
+  }
+  const collabColumns = all('PRAGMA table_info(collaborators)').map((c) => c.name);
+  if (!collabColumns.includes('default_commission_fee')) {
+    run('ALTER TABLE collaborators ADD COLUMN default_commission_fee REAL NOT NULL DEFAULT 0');
+  }
+}
 
 function now() {
   return new Date().toISOString();
@@ -131,6 +184,7 @@ export async function init() {
   }
 
   db.run(SCHEMA);
+  runDefensiveMigrations();
   persist();
   appendLog('Database inizializzato correttamente.');
   return db;
@@ -225,8 +279,8 @@ export function listCollaborators() {
 export function saveCollaborator(data, actor) {
   if (data.id) {
     run(
-      `UPDATE collaborators SET first_name=?, last_name=?, phone=?, email=?, updated_at=? WHERE id=?`,
-      [data.first_name, data.last_name, data.phone || '', data.email || '', now(), data.id]
+      `UPDATE collaborators SET first_name=?, last_name=?, phone=?, email=?, default_commission_fee=?, updated_at=? WHERE id=?`,
+      [data.first_name, data.last_name, data.phone || '', data.email || '', Number(data.default_commission_fee) || 0, now(), data.id]
     );
     const updated = get('SELECT * FROM collaborators WHERE id=?', [data.id]);
     recordOutbox('collaborators', updated.uuid, 'upsert', updated);
@@ -238,8 +292,8 @@ export function saveCollaborator(data, actor) {
   const rowUuid = uuid();
   const ts = now();
   run(
-    `INSERT INTO collaborators (uuid, first_name, last_name, phone, email, created_at, updated_at, deleted) VALUES (?, ?, ?, ?, ?, ?, ?, 0)`,
-    [rowUuid, data.first_name, data.last_name, data.phone || '', data.email || '', ts, ts]
+    `INSERT INTO collaborators (uuid, first_name, last_name, phone, email, default_commission_fee, created_at, updated_at, deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+    [rowUuid, data.first_name, data.last_name, data.phone || '', data.email || '', Number(data.default_commission_fee) || 0, ts, ts]
   );
   const created = get('SELECT * FROM collaborators WHERE uuid=?', [rowUuid]);
   recordOutbox('collaborators', rowUuid, 'upsert', created);
@@ -252,13 +306,15 @@ export function saveCollaborator(data, actor) {
 // Clients
 // ---------------------------------------------------------------------------
 
-function mapClient(row, collaboratorsById) {
+function mapClient(row, collaboratorsById, plansById) {
   if (!row) return row;
   const coll = collaboratorsById?.get(row.collaborator_id);
+  const plan = plansById?.get(row.plan_id);
   return {
     id: row.id,
     uuid: row.uuid,
     collaborator_id: row.collaborator_id,
+    plan_id: row.plan_id,
     first_name: row.first_name,
     last_name: row.last_name,
     tax_code: row.tax_code,
@@ -268,6 +324,9 @@ function mapClient(row, collaboratorsById) {
     billing_cycle: row.billing_cycle,
     monthly_fee: row.monthly_fee,
     installation_fee: row.installation_fee,
+    collaborator_commission_fee: row.collaborator_commission_fee || 0,
+    last_payment_date: row.last_payment_date || '',
+    next_due_date: row.next_due_date || '',
     pppoe_username: row.pppoe_username,
     pppoe_password: decryptField(row.pppoe_password_enc, getFieldKey()),
     mac_address: row.mac_address,
@@ -277,12 +336,49 @@ function mapClient(row, collaboratorsById) {
     created_at: row.created_at,
     updated_at: row.updated_at,
     collaborator_name: coll ? `${coll.first_name} ${coll.last_name}` : 'Nessuno',
+    plan_name: plan ? plan.name : null,
   };
 }
 
+function collaboratorsMap() {
+  return new Map(all('SELECT id, first_name, last_name FROM collaborators').map((c) => [c.id, c]));
+}
+function plansMap() {
+  return new Map(all('SELECT id, name FROM plans').map((p) => [p.id, p]));
+}
+
 export function listClients() {
-  const collaborators = new Map(all('SELECT id, first_name, last_name FROM collaborators').map((c) => [c.id, c]));
-  return all('SELECT * FROM clients WHERE deleted = 0 ORDER BY id DESC').map((row) => mapClient(row, collaborators));
+  return all('SELECT * FROM clients WHERE deleted = 0 ORDER BY id DESC').map((row) => mapClient(row, collaboratorsMap(), plansMap()));
+}
+
+/**
+ * Lightweight server-side search used by pickers/dropdowns (e.g. "select a
+ * client" when registering a payment) so the renderer never has to hold or
+ * render thousands of options at once. Matches name, IP, MAC or PPPoE
+ * username directly in SQL instead of filtering an in-memory array.
+ */
+export function searchClientsLite(query, limit = 25) {
+  const q = `%${(query || '').trim()}%`;
+  return all(
+    `SELECT id, first_name, last_name, assigned_ip, mac_address, pppoe_username FROM clients
+     WHERE deleted = 0 AND (first_name LIKE ? OR last_name LIKE ? OR assigned_ip LIKE ? OR mac_address LIKE ? OR pppoe_username LIKE ?)
+     ORDER BY first_name ASC LIMIT ?`,
+    [q, q, q, q, q, limit]
+  );
+}
+
+export function getClientDetail(id) {
+  const row = get('SELECT * FROM clients WHERE id=?', [id]);
+  if (!row) return null;
+  const client = mapClient(row, collaboratorsMap(), plansMap());
+  const payments = all('SELECT * FROM payments WHERE client_id=? AND deleted=0 ORDER BY due_date DESC, id DESC', [id]);
+  const commissions = all('SELECT * FROM commissions WHERE client_id=? AND deleted=0 ORDER BY id DESC', [id]).map((c) =>
+    mapCommission(c, new Map([[id, row]]), collaboratorsMap())
+  );
+  const totalPaid = payments.filter((p) => p.status === 'PAID').reduce((a, b) => a + b.amount, 0);
+  const totalOverdue = payments.filter((p) => p.status === 'OVERDUE').reduce((a, b) => a + b.amount, 0);
+  const overdueCount = payments.filter((p) => p.status === 'OVERDUE').length;
+  return { client, payments, commissions, stats: { totalPaid, totalOverdue, overdueCount, paymentsCount: payments.length } };
 }
 
 export function saveClient(data, actor) {
@@ -290,11 +386,13 @@ export function saveClient(data, actor) {
 
   if (data.id) {
     run(
-      `UPDATE clients SET collaborator_id=?, first_name=?, last_name=?, tax_code=?, address=?, phone=?, email=?,
-       billing_cycle=?, monthly_fee=?, installation_fee=?, pppoe_username=?, pppoe_password_enc=?, mac_address=?,
+      `UPDATE clients SET collaborator_id=?, plan_id=?, first_name=?, last_name=?, tax_code=?, address=?, phone=?, email=?,
+       billing_cycle=?, monthly_fee=?, installation_fee=?, collaborator_commission_fee=?, last_payment_date=?, next_due_date=?,
+       pppoe_username=?, pppoe_password_enc=?, mac_address=?,
        assigned_ip=?, device_model=?, notes=?, updated_at=? WHERE id=?`,
       [
         data.collaborator_id || null,
+        data.plan_id || null,
         data.first_name,
         data.last_name,
         data.tax_code || '',
@@ -304,6 +402,9 @@ export function saveClient(data, actor) {
         data.billing_cycle || 'MONTHLY',
         Number(data.monthly_fee) || 0,
         Number(data.installation_fee) || 0,
+        Number(data.collaborator_commission_fee) || 0,
+        data.last_payment_date || '',
+        data.next_due_date || '',
         data.pppoe_username || '',
         encPass,
         data.mac_address || '',
@@ -318,20 +419,21 @@ export function saveClient(data, actor) {
     recordOutbox('clients', updated.uuid, 'upsert', { ...updated, pppoe_password_enc: undefined });
     recordAudit(actor, 'UPDATE', 'client', data.id, { first_name: data.first_name, last_name: data.last_name });
     persist();
-    const collaborators = new Map(all('SELECT id, first_name, last_name FROM collaborators').map((c) => [c.id, c]));
-    return mapClient(updated, collaborators);
+    return mapClient(updated, collaboratorsMap(), plansMap());
   }
 
   const rowUuid = uuid();
   const ts = now();
   run(
-    `INSERT INTO clients (uuid, collaborator_id, first_name, last_name, tax_code, address, phone, email,
-     billing_cycle, monthly_fee, installation_fee, pppoe_username, pppoe_password_enc, mac_address, assigned_ip,
+    `INSERT INTO clients (uuid, collaborator_id, plan_id, first_name, last_name, tax_code, address, phone, email,
+     billing_cycle, monthly_fee, installation_fee, collaborator_commission_fee, last_payment_date, next_due_date,
+     pppoe_username, pppoe_password_enc, mac_address, assigned_ip,
      device_model, notes, created_at, updated_at, deleted)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
     [
       rowUuid,
       data.collaborator_id || null,
+      data.plan_id || null,
       data.first_name,
       data.last_name,
       data.tax_code || '',
@@ -341,6 +443,9 @@ export function saveClient(data, actor) {
       data.billing_cycle || 'MONTHLY',
       Number(data.monthly_fee) || 0,
       Number(data.installation_fee) || 0,
+      Number(data.collaborator_commission_fee) || 0,
+      data.last_payment_date || '',
+      data.next_due_date || '',
       data.pppoe_username || '',
       encPass,
       data.mac_address || '',
@@ -382,8 +487,7 @@ export function saveClient(data, actor) {
   }
 
   persist();
-  const collaborators = new Map(all('SELECT id, first_name, last_name FROM collaborators').map((c) => [c.id, c]));
-  return mapClient(get('SELECT * FROM clients WHERE id=?', [created.id]), collaborators);
+  return mapClient(get('SELECT * FROM clients WHERE id=?', [created.id]), collaboratorsMap(), plansMap());
 }
 
 export function deleteClient(id, actor) {
@@ -419,6 +523,25 @@ export function addPayment(data, actor) {
   const created = get('SELECT * FROM payments WHERE uuid=?', [rowUuid]);
   recordOutbox('payments', rowUuid, 'upsert', created);
   recordAudit(actor, 'CREATE', 'payment', created.id, { amount: data.amount, payment_type: data.payment_type });
+
+  // Recurring provvigione: se il cliente ha un collaboratore con una commissione
+  // ricorrente configurata, ogni canone RECURRING genera automaticamente la
+  // provvigione collegata (es. cliente paga 20€/mese, 5€/mese al collaboratore).
+  if (data.payment_type === 'RECURRING') {
+    const client = get('SELECT collaborator_id, collaborator_commission_fee FROM clients WHERE id=?', [data.client_id]);
+    if (client?.collaborator_id && Number(client.collaborator_commission_fee) > 0) {
+      addCommission(
+        {
+          collaborator_id: client.collaborator_id,
+          client_id: data.client_id,
+          amount: Number(client.collaborator_commission_fee),
+          payout_status: 'PENDING',
+        },
+        actor
+      );
+    }
+  }
+
   persist();
   const clients = new Map(all('SELECT id, first_name, last_name FROM clients').map((c) => [c.id, c]));
   return mapPayment(created, clients);
@@ -480,6 +603,136 @@ export function updateCommissionStatus(id, status, actor) {
   if (updated) recordOutbox('commissions', updated.uuid, 'upsert', updated);
   recordAudit(actor, 'UPDATE', 'commission', id, { status });
   persist();
+}
+
+// ---------------------------------------------------------------------------
+// Plans (catalogo offerte internet)
+// ---------------------------------------------------------------------------
+
+function mapPlan(row) {
+  if (!row) return row;
+  return { ...row, active: !!row.active };
+}
+
+export function listPlans() {
+  return all('SELECT * FROM plans WHERE deleted = 0 ORDER BY monthly_fee ASC').map(mapPlan);
+}
+
+export function savePlan(data, actor) {
+  if (data.id) {
+    run(
+      `UPDATE plans SET name=?, monthly_fee=?, installation_fee=?, download_mbps=?, upload_mbps=?, description=?, active=?, updated_at=? WHERE id=?`,
+      [data.name, Number(data.monthly_fee) || 0, Number(data.installation_fee) || 0, data.download_mbps || null, data.upload_mbps || null, data.description || '', data.active === false ? 0 : 1, now(), data.id]
+    );
+    const updated = get('SELECT * FROM plans WHERE id=?', [data.id]);
+    recordAudit(actor, 'UPDATE', 'plan', data.id, { name: data.name });
+    persist();
+    return mapPlan(updated);
+  }
+
+  const rowUuid = uuid();
+  const ts = now();
+  run(
+    `INSERT INTO plans (uuid, name, monthly_fee, installation_fee, download_mbps, upload_mbps, description, active, created_at, updated_at, deleted)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+    [rowUuid, data.name, Number(data.monthly_fee) || 0, Number(data.installation_fee) || 0, data.download_mbps || null, data.upload_mbps || null, data.description || '', data.active === false ? 0 : 1, ts, ts]
+  );
+  const created = get('SELECT * FROM plans WHERE uuid=?', [rowUuid]);
+  recordAudit(actor, 'CREATE', 'plan', created.id, { name: data.name });
+  persist();
+  return mapPlan(created);
+}
+
+export function deletePlan(id, actor) {
+  run('UPDATE plans SET deleted=1, updated_at=? WHERE id=?', [now(), id]);
+  recordAudit(actor, 'DELETE', 'plan', id, null);
+  persist();
+}
+
+// ---------------------------------------------------------------------------
+// Email templates
+// ---------------------------------------------------------------------------
+
+export function listEmailTemplates() {
+  return all('SELECT * FROM email_templates WHERE deleted = 0 ORDER BY name ASC');
+}
+
+export function saveEmailTemplate(data, actor) {
+  if (data.id) {
+    run('UPDATE email_templates SET name=?, subject=?, body=?, updated_at=? WHERE id=?', [data.name, data.subject, data.body, now(), data.id]);
+    const updated = get('SELECT * FROM email_templates WHERE id=?', [data.id]);
+    recordAudit(actor, 'UPDATE', 'email_template', data.id, { name: data.name });
+    persist();
+    return updated;
+  }
+  const rowUuid = uuid();
+  const ts = now();
+  run('INSERT INTO email_templates (uuid, name, subject, body, created_at, updated_at, deleted) VALUES (?, ?, ?, ?, ?, ?, 0)', [rowUuid, data.name, data.subject, data.body, ts, ts]);
+  const created = get('SELECT * FROM email_templates WHERE uuid=?', [rowUuid]);
+  recordAudit(actor, 'CREATE', 'email_template', created.id, { name: data.name });
+  persist();
+  return created;
+}
+
+export function deleteEmailTemplate(id, actor) {
+  run('UPDATE email_templates SET deleted=1, updated_at=? WHERE id=?', [now(), id]);
+  recordAudit(actor, 'DELETE', 'email_template', id, null);
+  persist();
+}
+
+// ---------------------------------------------------------------------------
+// Analytics
+// ---------------------------------------------------------------------------
+
+/** Real monthly revenue/MRR/new-clients series computed from actual data, for the dashboard chart. */
+export function getMonthlyAnalytics(months = 12) {
+  const series = [];
+  const today = new Date();
+  for (let i = months - 1; i >= 0; i--) {
+    const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+    const monthStart = d.toISOString().slice(0, 7); // YYYY-MM
+    const nextMonth = new Date(today.getFullYear(), today.getMonth() - i + 1, 1).toISOString().slice(0, 7);
+
+    const revenueRow = get(
+      "SELECT COALESCE(SUM(amount),0) as total FROM payments WHERE status='PAID' AND payment_date >= ? AND payment_date < ? AND deleted=0",
+      [monthStart, nextMonth]
+    );
+    const newClientsRow = get(
+      'SELECT COUNT(*) as count FROM clients WHERE created_at >= ? AND created_at < ? AND deleted=0',
+      [monthStart, nextMonth]
+    );
+    const overdueRow = get(
+      "SELECT COALESCE(SUM(amount),0) as total FROM payments WHERE status='OVERDUE' AND due_date >= ? AND due_date < ? AND deleted=0",
+      [monthStart, nextMonth]
+    );
+
+    series.push({
+      month: monthStart,
+      revenue: revenueRow?.total || 0,
+      newClients: newClientsRow?.count || 0,
+      overdue: overdueRow?.total || 0,
+    });
+  }
+  return series;
+}
+
+export function getTopClientsByRevenue(limit = 5) {
+  return all(
+    `SELECT c.id, c.first_name, c.last_name, COALESCE(SUM(p.amount),0) as total_paid
+     FROM clients c LEFT JOIN payments p ON p.client_id = c.id AND p.status='PAID' AND p.deleted=0
+     WHERE c.deleted=0 GROUP BY c.id ORDER BY total_paid DESC LIMIT ?`,
+    [limit]
+  );
+}
+
+export function getCommissionsByCollaborator() {
+  return all(
+    `SELECT col.id, col.first_name, col.last_name,
+       COALESCE(SUM(CASE WHEN comm.payout_status='PENDING' THEN comm.amount ELSE 0 END),0) as pending_amount,
+       COALESCE(SUM(comm.amount),0) as total_amount
+     FROM collaborators col LEFT JOIN commissions comm ON comm.collaborator_id = col.id AND comm.deleted=0
+     WHERE col.deleted=0 GROUP BY col.id ORDER BY total_amount DESC`
+  );
 }
 
 export function getRawDb() {

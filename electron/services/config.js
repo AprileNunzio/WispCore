@@ -22,6 +22,17 @@ const DEFAULT_CONFIG = {
     lastSyncAt: null,
     siteId: null,
   },
+  smtp: {
+    enabled: false,
+    host: '',
+    port: 587,
+    secure: false,
+    user: '',
+    passwordEncrypted: null,
+    passwordProtection: null,
+    fromName: 'WispCore',
+    fromEmail: '',
+  },
 };
 
 export function readConfig() {
@@ -31,7 +42,13 @@ export function readConfig() {
   }
   try {
     const raw = fs.readFileSync(paths.configPath, 'utf-8');
-    return { ...DEFAULT_CONFIG, ...JSON.parse(raw), sync: { ...DEFAULT_CONFIG.sync, ...(JSON.parse(raw).sync || {}) } };
+    const parsed = JSON.parse(raw);
+    return {
+      ...DEFAULT_CONFIG,
+      ...parsed,
+      sync: { ...DEFAULT_CONFIG.sync, ...(parsed.sync || {}) },
+      smtp: { ...DEFAULT_CONFIG.smtp, ...(parsed.smtp || {}) },
+    };
   } catch {
     return { ...DEFAULT_CONFIG };
   }

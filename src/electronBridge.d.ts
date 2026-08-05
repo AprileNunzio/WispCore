@@ -1,5 +1,7 @@
 import type {
   Client,
+  ClientLite,
+  ClientDetail,
   Collaborator,
   Payment,
   Commission,
@@ -12,6 +14,12 @@ import type {
   SyncSummary,
   AuditLogEntry,
   UpdateCheckResult,
+  Plan,
+  MonthlyAnalyticsPoint,
+  TopClient,
+  CommissionByCollaborator,
+  EmailTemplate,
+  SmtpSettings,
 } from './types';
 
 export interface WispCoreBridge {
@@ -30,6 +38,8 @@ export interface WispCoreBridge {
     list: () => Promise<Client[]>;
     save: (data: Partial<Client>) => Promise<Client>;
     delete: (id: number) => Promise<void>;
+    getDetail: (id: number) => Promise<ClientDetail | null>;
+    search: (query: string, limit?: number) => Promise<ClientLite[]>;
   };
   collaborators: {
     list: () => Promise<Collaborator[]>;
@@ -44,6 +54,29 @@ export interface WispCoreBridge {
     list: () => Promise<Commission[]>;
     add: (data: Omit<Commission, 'id' | 'created_at'>) => Promise<Commission>;
     updateStatus: (id: number, status: PayoutStatus) => Promise<void>;
+    byCollaborator: () => Promise<CommissionByCollaborator[]>;
+  };
+  plans: {
+    list: () => Promise<Plan[]>;
+    save: (data: Partial<Plan>) => Promise<Plan>;
+    delete: (id: number) => Promise<void>;
+  };
+  analytics: {
+    monthly: (months?: number) => Promise<MonthlyAnalyticsPoint[]>;
+    topClients: (limit?: number) => Promise<TopClient[]>;
+  };
+  emailTemplates: {
+    list: () => Promise<EmailTemplate[]>;
+    save: (data: Partial<EmailTemplate>) => Promise<EmailTemplate>;
+    delete: (id: number) => Promise<void>;
+  };
+  smtp: {
+    getSettings: () => Promise<SmtpSettings>;
+    setSettings: (settings: Partial<SmtpSettings> & { password?: string }) => Promise<SmtpSettings>;
+    test: (settings?: Partial<SmtpSettings> & { password?: string }) => Promise<{ ok: boolean; error?: string }>;
+  };
+  email: {
+    sendPaymentReminder: (paymentId: number, templateId: number) => Promise<{ messageId: string }>;
   };
   backup: {
     list: () => Promise<BackupInfo[]>;

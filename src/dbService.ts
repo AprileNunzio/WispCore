@@ -1,11 +1,16 @@
 import type {
   Client,
+  ClientLite,
+  ClientDetail,
   Collaborator,
   Payment,
   Commission,
   PaymentStatus,
   PayoutStatus,
   SyncSettings,
+  Plan,
+  EmailTemplate,
+  SmtpSettings,
 } from './types';
 
 /**
@@ -84,6 +89,8 @@ export const dbService = {
   getClients: (): Promise<Client[]> => bridge().clients.list(),
   saveClient: (data: Partial<Client>): Promise<Client> => bridge().clients.save(data),
   deleteClient: (id: number): Promise<void> => bridge().clients.delete(id),
+  getClientDetail: (id: number): Promise<ClientDetail | null> => bridge().clients.getDetail(id),
+  searchClients: (query: string, limit?: number): Promise<ClientLite[]> => bridge().clients.search(query, limit),
 
   // ---- Collaborators ----
   getCollaborators: (): Promise<Collaborator[]> => bridge().collaborators.list(),
@@ -98,6 +105,27 @@ export const dbService = {
   getCommissions: (): Promise<Commission[]> => bridge().commissions.list(),
   addCommission: (data: Omit<Commission, 'id' | 'created_at'>): Promise<Commission> => bridge().commissions.add(data),
   updateCommissionStatus: (id: number, status: PayoutStatus): Promise<void> => bridge().commissions.updateStatus(id, status),
+  getCommissionsByCollaborator: () => bridge().commissions.byCollaborator(),
+
+  // ---- Plans ----
+  getPlans: (): Promise<Plan[]> => bridge().plans.list(),
+  savePlan: (data: Partial<Plan>): Promise<Plan> => bridge().plans.save(data),
+  deletePlan: (id: number): Promise<void> => bridge().plans.delete(id),
+
+  // ---- Analytics ----
+  getMonthlyAnalytics: (months?: number) => bridge().analytics.monthly(months),
+  getTopClients: (limit?: number) => bridge().analytics.topClients(limit),
+
+  // ---- Email templates ----
+  getEmailTemplates: (): Promise<EmailTemplate[]> => bridge().emailTemplates.list(),
+  saveEmailTemplate: (data: Partial<EmailTemplate>): Promise<EmailTemplate> => bridge().emailTemplates.save(data),
+  deleteEmailTemplate: (id: number): Promise<void> => bridge().emailTemplates.delete(id),
+
+  // ---- SMTP / email ----
+  getSmtpSettings: (): Promise<SmtpSettings> => bridge().smtp.getSettings(),
+  setSmtpSettings: (settings: Partial<SmtpSettings> & { password?: string }) => bridge().smtp.setSettings(settings),
+  testSmtpConnection: (settings?: Partial<SmtpSettings> & { password?: string }) => bridge().smtp.test(settings),
+  sendPaymentReminder: (paymentId: number, templateId: number) => bridge().email.sendPaymentReminder(paymentId, templateId),
 
   // ---- Backup & restore ----
   getBackupsList: () => bridge().backup.list(),

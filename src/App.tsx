@@ -7,6 +7,9 @@ import { DashboardView } from './components/DashboardView';
 import { ClientManagementView } from './components/ClientManagementView';
 import { CollaboratorsView } from './components/CollaboratorsView';
 import { FinancialView } from './components/FinancialView';
+import { PlansView } from './components/PlansView';
+import { ScadenzeView } from './components/ScadenzeView';
+import { EmailTemplatesView } from './components/EmailTemplatesView';
 import { SettingsView } from './components/SettingsView';
 import {
   LayoutDashboard,
@@ -17,13 +20,16 @@ import {
   Lock,
   Wifi,
   Menu,
-  X
+  X,
+  Router,
+  CalendarClock,
+  MailPlus
 } from 'lucide-react';
 
-type Tab = 'dashboard' | 'clients' | 'collaborators' | 'financial' | 'settings';
+type Tab = 'dashboard' | 'clients' | 'collaborators' | 'financial' | 'plans' | 'scadenze' | 'templates' | 'settings';
 
 const navItemClass = (active: boolean) =>
-  `w-full flex items-center gap-3 px-3.5 py-3 rounded-xl transition-all cursor-pointer ${
+  `w-full flex items-center gap-3 px-3.5 py-3 rounded-xl transition-all cursor-pointer text-sm ${
     active
       ? 'bg-blue-50 text-blue-700 border border-blue-200 font-semibold shadow-sm'
       : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100 border border-transparent'
@@ -62,7 +68,7 @@ const AppShell: React.FC = () => {
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6 text-center">
         <div className="max-w-md">
           <p className="text-rose-600 font-semibold mb-2">Impossibile avviare WispCore</p>
-          <p className="text-gray-500 text-xs font-mono">{bootError}</p>
+          <p className="text-gray-500 text-sm font-mono">{bootError}</p>
         </div>
       </div>
     );
@@ -70,7 +76,7 @@ const AppShell: React.FC = () => {
 
   if (isSetupComplete === null) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center text-blue-600 font-mono text-sm">
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center text-blue-600 font-mono text-base">
         Caricamento WispCore Zero-Trust Environment...
       </div>
     );
@@ -95,7 +101,7 @@ const AppShell: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900 flex flex-col md:flex-row">
-      <aside className={`fixed md:static inset-y-0 left-0 z-40 w-64 bg-white/95 glass-panel border-r border-gray-200 p-5 flex flex-col justify-between transition-transform duration-300 ${
+      <aside className={`fixed md:static inset-y-0 left-0 z-40 w-64 bg-white/95 glass-panel border-r border-gray-200 p-5 flex flex-col justify-between transition-transform duration-300 overflow-y-auto ${
         mobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
       }`}>
         <div>
@@ -107,47 +113,47 @@ const AppShell: React.FC = () => {
               <h2 className="text-xl font-extrabold text-gray-900 tracking-wider flex items-center gap-1">
                 WispCore
               </h2>
-              <span className="text-[10px] text-cyan-700 font-mono font-medium block">Alynet Edition • Enterprise</span>
+              <span className="text-xs text-cyan-700 font-mono font-medium block">Alynet Edition • Enterprise</span>
             </div>
           </div>
 
-          <nav className="space-y-1.5 text-xs font-medium">
-            <button
-              onClick={() => { setActiveTab('dashboard'); setMobileMenuOpen(false); }}
-              className={navItemClass(activeTab === 'dashboard')}
-            >
+          <nav className="space-y-1.5 font-medium">
+            <button onClick={() => { setActiveTab('dashboard'); setMobileMenuOpen(false); }} className={navItemClass(activeTab === 'dashboard')}>
               <LayoutDashboard size={18} />
               <span>Dashboard Operativa</span>
             </button>
 
-            <button
-              onClick={() => { setActiveTab('clients'); setMobileMenuOpen(false); }}
-              className={navItemClass(activeTab === 'clients')}
-            >
+            <button onClick={() => { setActiveTab('clients'); setMobileMenuOpen(false); }} className={navItemClass(activeTab === 'clients')}>
               <Users size={18} />
               <span>Anagrafica & Tecnica WISP</span>
             </button>
 
-            <button
-              onClick={() => { setActiveTab('collaborators'); setMobileMenuOpen(false); }}
-              className={navItemClass(activeTab === 'collaborators')}
-            >
+            <button onClick={() => { setActiveTab('plans'); setMobileMenuOpen(false); }} className={navItemClass(activeTab === 'plans')}>
+              <Router size={18} />
+              <span>Piani Internet</span>
+            </button>
+
+            <button onClick={() => { setActiveTab('collaborators'); setMobileMenuOpen(false); }} className={navItemClass(activeTab === 'collaborators')}>
               <UserCheck size={18} />
               <span>Collaboratori & Provvigioni</span>
             </button>
 
-            <button
-              onClick={() => { setActiveTab('financial'); setMobileMenuOpen(false); }}
-              className={navItemClass(activeTab === 'financial')}
-            >
+            <button onClick={() => { setActiveTab('financial'); setMobileMenuOpen(false); }} className={navItemClass(activeTab === 'financial')}>
               <Wallet size={18} />
               <span>Modulo Finanziario</span>
             </button>
 
-            <button
-              onClick={() => { setActiveTab('settings'); setMobileMenuOpen(false); }}
-              className={navItemClass(activeTab === 'settings')}
-            >
+            <button onClick={() => { setActiveTab('scadenze'); setMobileMenuOpen(false); }} className={navItemClass(activeTab === 'scadenze')}>
+              <CalendarClock size={18} />
+              <span>Scadenzario Dettagliato</span>
+            </button>
+
+            <button onClick={() => { setActiveTab('templates'); setMobileMenuOpen(false); }} className={navItemClass(activeTab === 'templates')}>
+              <MailPlus size={18} />
+              <span>Template Email</span>
+            </button>
+
+            <button onClick={() => { setActiveTab('settings'); setMobileMenuOpen(false); }} className={navItemClass(activeTab === 'settings')}>
               <Settings size={18} />
               <span>Impostazioni & Sync</span>
             </button>
@@ -157,7 +163,7 @@ const AppShell: React.FC = () => {
         <div className="pt-6 border-t border-gray-200">
           <button
             onClick={() => setIsUnlocked(false)}
-            className="w-full flex items-center justify-center gap-2 px-3.5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs rounded-xl border border-gray-200 transition-colors cursor-pointer"
+            className="w-full flex items-center justify-center gap-2 px-3.5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-600 text-sm rounded-xl border border-gray-200 transition-colors cursor-pointer"
           >
             <Lock size={15} />
             <span>Blocca Sessione (Lock)</span>
@@ -178,8 +184,11 @@ const AppShell: React.FC = () => {
 
         {activeTab === 'dashboard' && <DashboardView onNavigateToClients={handleNavigateToClients} />}
         {activeTab === 'clients' && <ClientManagementView initialSearchQuery={clientSearchQuery} />}
+        {activeTab === 'plans' && <PlansView />}
         {activeTab === 'collaborators' && <CollaboratorsView />}
         {activeTab === 'financial' && <FinancialView />}
+        {activeTab === 'scadenze' && <ScadenzeView />}
+        {activeTab === 'templates' && <EmailTemplatesView />}
         {activeTab === 'settings' && <SettingsView />}
       </main>
     </div>

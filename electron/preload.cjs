@@ -27,6 +27,8 @@ contextBridge.exposeInMainWorld('wispcore', {
     list: () => invoke('clients:list'),
     save: (data) => invoke('clients:save', data),
     delete: (id) => invoke('clients:delete', id),
+    getDetail: (id) => invoke('clients:getDetail', id),
+    search: (query, limit) => invoke('clients:search', query, limit),
   },
   collaborators: {
     list: () => invoke('collaborators:list'),
@@ -41,6 +43,29 @@ contextBridge.exposeInMainWorld('wispcore', {
     list: () => invoke('commissions:list'),
     add: (data) => invoke('commissions:add', data),
     updateStatus: (id, status) => invoke('commissions:updateStatus', id, status),
+    byCollaborator: () => invoke('commissions:byCollaborator'),
+  },
+  plans: {
+    list: () => invoke('plans:list'),
+    save: (data) => invoke('plans:save', data),
+    delete: (id) => invoke('plans:delete', id),
+  },
+  analytics: {
+    monthly: (months) => invoke('analytics:monthly', months),
+    topClients: (limit) => invoke('analytics:topClients', limit),
+  },
+  emailTemplates: {
+    list: () => invoke('emailTemplates:list'),
+    save: (data) => invoke('emailTemplates:save', data),
+    delete: (id) => invoke('emailTemplates:delete', id),
+  },
+  smtp: {
+    getSettings: () => invoke('smtp:getSettings'),
+    setSettings: (settings) => invoke('smtp:setSettings', settings),
+    test: (settings) => invoke('smtp:test', settings),
+  },
+  email: {
+    sendPaymentReminder: (paymentId, templateId) => invoke('email:sendPaymentReminder', { paymentId, templateId }),
   },
   backup: {
     list: () => invoke('backup:list'),

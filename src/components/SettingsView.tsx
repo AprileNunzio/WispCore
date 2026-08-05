@@ -15,8 +15,9 @@ import {
   KeyRound,
   Copy,
   Radio,
+  MailCheck,
 } from 'lucide-react';
-import type { AppPaths, BackupInfo, SyncSettings, AuditLogEntry, UpdateCheckResult } from '../types';
+import type { AppPaths, BackupInfo, SyncSettings, AuditLogEntry, UpdateCheckResult, SmtpSettings } from '../types';
 
 export const SettingsView: React.FC = () => {
   const { notify } = useToast();
@@ -41,17 +42,22 @@ export const SettingsView: React.FC = () => {
   const [orgKeyInput, setOrgKeyInput] = useState('');
   const [generatedOrgKey, setGeneratedOrgKey] = useState<string | null>(null);
 
+  const [smtp, setSmtp] = useState<SmtpSettings | null>(null);
+  const [smtpForm, setSmtpForm] = useState({ host: '', port: 587, secure: false, user: '', password: '', fromName: 'WispCore', fromEmail: '' });
+  const [testingSmtp, setTestingSmtp] = useState(false);
+
   useEffect(() => {
     loadAll();
   }, []);
 
   const loadAll = async () => {
-    const [v, p, b, log, s] = await Promise.all([
+    const [v, p, b, log, s, sm] = await Promise.all([
       dbService.getAppVersion(),
       dbService.getAppPaths(),
       dbService.getBackupsList(),
       dbService.getAuditLog(15),
       dbService.getSyncSettings(),
+      dbService.getSmtpSettings(),
     ]);
     setAppVersion(v);
     setPaths(p);
@@ -59,6 +65,31 @@ export const SettingsView: React.FC = () => {
     setAuditLog(log);
     setSync(s);
     setSyncForm({ host: s.host, port: s.port, database: s.database, user: s.user, password: '', ssl: s.ssl, autoSyncMinutes: s.autoSyncMinutes });
+    setSmtp(sm);
+    setSmtpForm({ host: sm.host, port: sm.port, secure: sm.secure, user: sm.user, password: '', fromName: sm.fromName, fromEmail: sm.fromEmail });
+  };
+
+  const handleSaveSmtpSettings = async (enabled: boolean) => {
+    try {
+      const updated = await dbService.setSmtpSettings({ ...smtpForm, enabled });
+      setSmtp(updated);
+      notify('Configurazione SMTP salvata.', 'success');
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Errore nel salvataggio.', 'error');
+    }
+  };
+
+  const handleTestSmtp = async () => {
+    setTestingSmtp(true);
+    try {
+      const result = await dbService.testSmtpConnection(smtpForm.password ? smtpForm : { ...smtpForm, password: undefined });
+      if (result.ok) notify('Connessione SMTP riuscita.', 'success');
+      else notify(`Connessione fallita: ${result.error}`, 'error');
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Errore di connessione.', 'error');
+    } finally {
+      setTestingSmtp(false);
+    }
   };
 
   const handleCheckUpdate = async () => {
@@ -492,6 +523,80 @@ export const SettingsView: React.FC = () => {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+
+        {/* --- SMTP / email --- */}
+        <div className="glass-panel p-6 rounded-2xl border border-gray-200 space-y-4 lg:col-span-2">
+          <div className="flex items-center gap-3">
+            <div className="p-3 bg-blue-50 text-blue-600 rounded-xl border border-blue-200">
+              <MailCheck size={22} />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-gray-900">Server SMTP (invio email)</h3>
+              <p className="text-sm text-gray-500">Necessario per inviare i solleciti di pagamento dalla pagina Scadenze</p>
+            </div>
+            {smtp?.enabled && (
+              <span className="ml-auto text-[11px] px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full font-semibold">Attivo</span>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+            <div>
+              <label className="text-gray-500 block mb-1">Host SMTP</label>
+              <input type="text" placeholder="es. smtp.gmail.com" value={smtpForm.host}
+                onChange={(e) => setSmtpForm({ ...smtpForm, host: e.target.value })}
+                className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-gray-900 font-mono" />
+            </div>
+            <div>
+              <label className="text-gray-500 block mb-1">Porta</label>
+              <input type="number" value={smtpForm.port}
+                onChange={(e) => setSmtpForm({ ...smtpForm, port: Number(e.target.value) || 587 })}
+                className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-gray-900 font-mono" />
+            </div>
+            <div>
+              <label className="text-gray-500 block mb-1">Utente / Email di accesso</label>
+              <input type="text" value={smtpForm.user}
+                onChange={(e) => setSmtpForm({ ...smtpForm, user: e.target.value })}
+                className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-gray-900 font-mono" />
+            </div>
+            <div>
+              <label className="text-gray-500 block mb-1">Password {smtp?.hasPassword && <span className="text-gray-400">(già impostata)</span>}</label>
+              <input type="password" value={smtpForm.password}
+                onChange={(e) => setSmtpForm({ ...smtpForm, password: e.target.value })}
+                className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-gray-900 font-mono" />
+            </div>
+            <div>
+              <label className="text-gray-500 block mb-1">Nome Mittente</label>
+              <input type="text" value={smtpForm.fromName}
+                onChange={(e) => setSmtpForm({ ...smtpForm, fromName: e.target.value })}
+                className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-gray-900" />
+            </div>
+            <div>
+              <label className="text-gray-500 block mb-1">Email Mittente</label>
+              <input type="email" value={smtpForm.fromEmail}
+                onChange={(e) => setSmtpForm({ ...smtpForm, fromEmail: e.target.value })}
+                className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-gray-900" />
+            </div>
+            <div className="sm:col-span-2 flex items-center gap-2">
+              <input type="checkbox" id="smtp-secure" checked={smtpForm.secure} onChange={(e) => setSmtpForm({ ...smtpForm, secure: e.target.checked })} />
+              <label htmlFor="smtp-secure" className="text-gray-500">Connessione TLS/SSL (porta 465)</label>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <button onClick={handleTestSmtp} disabled={testingSmtp}
+              className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold rounded-xl cursor-pointer disabled:opacity-50">
+              {testingSmtp ? 'Test in corso...' : 'Testa Connessione'}
+            </button>
+            <button onClick={() => handleSaveSmtpSettings(false)}
+              className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold rounded-xl cursor-pointer">
+              Salva Configurazione
+            </button>
+            <button onClick={() => handleSaveSmtpSettings(true)}
+              className="px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl cursor-pointer">
+              Salva & Attiva Invio Email
+            </button>
           </div>
         </div>
 
