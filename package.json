@@ -1,0 +1,81 @@
+{
+  "name": "WispCore",
+  "private": true,
+  "version": "1.0.16",
+  "type": "module",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "dev:electron": "concurrently -k -n VITE,ELECTRON -c blue,magenta \"vite\" \"wait-on tcp:5173 && electron .\"",
+    "build": "node scripts/increment-version.js && tsc -b && vite build && electron-builder --win nsis",
+    "lint": "oxlint",
+    "preview": "vite preview"
+  },
+  "description": "Software Gestionale WISP per Alynet",
+  "author": "NunzioTech",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AprileNunzio/WispCore.git"
+  },
+  "build": {
+    "appId": "com.alynet.wispcore",
+    "productName": "WispCore",
+    "executableName": "WispCore",
+    "publish": null,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json",
+      "node_modules/**/*",
+      "!node_modules/{electron,electron-builder,typescript,vite,oxlint,concurrently,wait-on}/**/*",
+      "!node_modules/{@vitejs,@tailwindcss,@types}/**/*",
+      "!node_modules/**/{*.md,*.map,LICENSE*,CHANGELOG*,.github}",
+      "!src/**/*",
+      "!scripts/**/*"
+    ],
+    "asarUnpack": [
+      "node_modules/sql.js/dist/sql-wasm.wasm"
+    ],
+    "win": {
+      "target": "nsis",
+      "executableName": "WispCore",
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "WispCore"
+    }
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "hash-wasm": "^4.12.0",
+    "lucide-react": "^1.28.0",
+    "mariadb": "^3.5.3",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "recharts": "^3.10.1",
+    "sql.js": "^1.14.1",
+    "tailwind-merge": "^3.6.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@types/sql.js": "^1.4.11",
+    "@vitejs/plugin-react": "^6.0.4",
+    "concurrently": "^10.0.4",
+    "electron": "^43.3.0",
+    "electron-builder": "^26.15.3",
+    "oxlint": "^1.75.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.2.0",
+    "wait-on": "^9.1.0"
+  }
+}
