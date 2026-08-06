@@ -1,14 +1,27 @@
 import React, { useState, useEffect } from 'react';
 import { dbService } from '../dbService';
-import { useToast } from './Toast';
-import type { Client, Collaborator, Commission, CommissionByCollaborator } from '../types';
-import { Users, UserPlus, Award, Phone, Mail, CheckCircle2, Clock, Edit3, Wallet, UserRound, ArrowRight } from 'lucide-react';
+import { useToast, useConfirm } from './Toast';
+import type { Client, Collaborator, CollaboratorStatus, Commission, CommissionByCollaborator } from '../types';
+import { Users, UserPlus, Award, Phone, Mail, CheckCircle2, Clock, Edit3, Wallet, UserRound, ArrowRight, Trash2 } from 'lucide-react';
 import { CollaboratorDetailModal } from './CollaboratorDetailModal';
 
-const emptyForm = { first_name: '', last_name: '', phone: '', email: '' };
+const emptyForm = { first_name: '', last_name: '', phone: '', email: '', status: 'ACTIVE' as CollaboratorStatus };
+
+const COLLABORATOR_STATUS_LABELS: Record<CollaboratorStatus, string> = {
+  ACTIVE: '🟢 Attivo',
+  SUSPENDED: '🟡 Sospeso',
+  BLOCKED: '🔴 Bloccato',
+};
+
+const COLLABORATOR_STATUS_BADGE: Record<CollaboratorStatus, string> = {
+  ACTIVE: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  SUSPENDED: 'bg-amber-50 text-amber-700 border-amber-200',
+  BLOCKED: 'bg-rose-50 text-rose-700 border-rose-200',
+};
 
 export const CollaboratorsView: React.FC = () => {
   const { notify } = useToast();
+  const confirmDialog = useConfirm();
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
   const [commissions, setCommissions] = useState<Commission[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
@@ -60,6 +73,14 @@ export const CollaboratorsView: React.FC = () => {
     loadData();
   };
 
+  const handleDeleteCommission = async (comm: Commission) => {
+    const ok = await confirmDialog(`Eliminare la provvigione di € ${comm.amount.toFixed(2)} per ${comm.collaborator_name} (cliente ${comm.client_name})? Generata per errore o duplicata, non verrà recuperata.`);
+    if (!ok) return;
+    await dbService.deleteCommission(comm.id);
+    notify('Provvigione eliminata.', 'success');
+    loadData();
+  };
+
   return (
     <div className="space-y-6 pb-12">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white/80 glass-panel rounded-2xl p-6 border border-gray-200">
@@ -100,7 +121,12 @@ export const CollaboratorsView: React.FC = () => {
                     {col.first_name[0]}{col.last_name[0]}
                   </div>
                   <div>
-                    <h3 className="text-base font-bold text-gray-900">{col.first_name} {col.last_name}</h3>
+                    <h3 className="text-base font-bold text-gray-900 flex items-center gap-1.5 flex-wrap">
+                      <span>{col.first_name} {col.last_name}</span>
+                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${COLLABORATOR_STATUS_BADGE[col.status || 'ACTIVE']}`}>
+                        {COLLABORATOR_STATUS_LABELS[col.status || 'ACTIVE']}
+                      </span>
+                    </h3>
                     <span className="text-xs text-gray-400">Tecnico / Commerciale</span>
                   </div>
                 </div>
@@ -200,7 +226,7 @@ export const CollaboratorsView: React.FC = () => {
                         </span>
                       )}
                     </td>
-                    <td className="p-3 text-right">
+                    <td className="p-3 text-right space-x-1 whitespace-nowrap">
                       <button
                         onClick={() => handleToggleCommissionStatus(comm.id, comm.payout_status)}
                         className={`px-3 py-1 rounded-lg font-medium transition-colors cursor-pointer text-xs ${
@@ -210,6 +236,13 @@ export const CollaboratorsView: React.FC = () => {
                         }`}
                       >
                         {comm.payout_status === 'PAID' ? 'Segna In Attesa' : 'Segna Liquidata'}
+                      </button>
+                      <button
+                        onClick={() => handleDeleteCommission(comm)}
+                        title="Elimina provvigione (errore/duplicato)"
+                        className="p-1.5 bg-gray-100 hover:bg-rose-50 text-rose-600 border border-gray-200 hover:border-rose-300 rounded cursor-pointer inline-flex"
+                      >
+                        <Trash2 size={13} />
                       </button>
                     </td>
                   </tr>
@@ -262,6 +295,18 @@ export const CollaboratorsView: React.FC = () => {
                   onChange={(e) => setForm({ ...form, email: e.target.value })}
                   className="w-full bg-white border border-gray-300 rounded-xl p-2.5 text-gray-900"
                 />
+              </div>
+              <div>
+                <label className="text-gray-500 block mb-1">Stato Collaboratore</label>
+                <select
+                  value={form.status || 'ACTIVE'}
+                  onChange={(e) => setForm({ ...form, status: e.target.value as CollaboratorStatus })}
+                  className="w-full bg-white border border-gray-300 rounded-xl p-2.5 text-gray-900 font-semibold"
+                >
+                  <option value="ACTIVE">🟢 Attivo</option>
+                  <option value="SUSPENDED">🟡 Sospeso</option>
+                  <option value="BLOCKED">🔴 Bloccato</option>
+                </select>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>

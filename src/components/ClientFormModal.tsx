@@ -569,12 +569,12 @@ export const ClientFormModal: React.FC<Props> = ({
           <div className="bg-blue-50/50 p-5 rounded-2xl border border-blue-200 space-y-4">
             <h3 className="text-sm font-bold text-blue-900 flex items-center gap-2 pb-2 border-b border-blue-200">
               <CheckSquare size={16} className="text-blue-600" />
-              <span>5. Stato Iniziale & Flag Incasso Immediato</span>
+              <span>5. {isEditing ? 'Stato Cliente' : 'Stato Iniziale & Flag Incasso Immediato'}</span>
             </h3>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
               <div>
-                <label className="text-gray-600 mb-1 block">Stato Iniziale Cliente</label>
+                <label className="text-gray-600 mb-1 block">{isEditing ? 'Stato Cliente (modificabile in qualsiasi momento)' : 'Stato Iniziale Cliente'}</label>
                 <select
                   value={form.status || 'ACTIVE'}
                   onChange={(e) => setForm({ ...form, status: e.target.value as ClientStatus })}

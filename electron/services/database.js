@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS collaborators (
   phone TEXT,
   email TEXT,
   default_commission_fee REAL NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'ACTIVE',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   deleted INTEGER NOT NULL DEFAULT 0
@@ -353,6 +354,9 @@ function runDefensiveMigrations() {
   }
   if (!collabColumns.includes('default_installation_commission')) {
     run('ALTER TABLE collaborators ADD COLUMN default_installation_commission REAL NOT NULL DEFAULT 0');
+  }
+  if (!collabColumns.includes('status')) {
+    run("ALTER TABLE collaborators ADD COLUMN status TEXT NOT NULL DEFAULT 'ACTIVE'");
   }
 
   const adminColumns = all('PRAGMA table_info(admins)').map((c) => c.name);
@@ -763,7 +767,7 @@ export function listCollaborators() {
 export function saveCollaborator(data, actor) {
   if (data.id) {
     run(
-      `UPDATE collaborators SET first_name=?, last_name=?, phone=?, email=?, default_commission_fee=?, default_installation_commission=?, updated_at=? WHERE id=?`,
+      `UPDATE collaborators SET first_name=?, last_name=?, phone=?, email=?, default_commission_fee=?, default_installation_commission=?, status=?, updated_at=? WHERE id=?`,
       [
         data.first_name,
         data.last_name,
@@ -771,6 +775,7 @@ export function saveCollaborator(data, actor) {
         data.email || '',
         Number(data.default_commission_fee) || 0,
         Number(data.default_installation_commission) || 0,
+        data.status || 'ACTIVE',
         now(),
         data.id,
       ]
@@ -785,7 +790,7 @@ export function saveCollaborator(data, actor) {
   const rowUuid = uuid();
   const ts = now();
   run(
-    `INSERT INTO collaborators (uuid, first_name, last_name, phone, email, default_commission_fee, default_installation_commission, created_at, updated_at, deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+    `INSERT INTO collaborators (uuid, first_name, last_name, phone, email, default_commission_fee, default_installation_commission, status, created_at, updated_at, deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
     [
       rowUuid,
       data.first_name,
@@ -794,6 +799,7 @@ export function saveCollaborator(data, actor) {
       data.email || '',
       Number(data.default_commission_fee) || 0,
       Number(data.default_installation_commission) || 0,
+      data.status || 'ACTIVE',
       ts,
       ts,
     ]
@@ -1154,7 +1160,10 @@ export function updatePaymentStatus(id, status, actor, customPaymentDate) {
   if (paymentDate) {
     run('UPDATE payments SET status=?, payment_date=?, updated_at=? WHERE id=?', [status, paymentDate, now(), id]);
   } else {
-    run('UPDATE payments SET status=?, updated_at=? WHERE id=?', [status, now(), id]);
+    // Si esce da PAID (es. "Annulla Saldo" per correggere un errore): la vecchia
+    // payment_date va cancellata, altrimenti resterebbe una data di incasso
+    // "fantasma" su un pagamento che ora risulta di nuovo In Attesa/Insoluto.
+    run("UPDATE payments SET status=?, payment_date='', updated_at=? WHERE id=?", [status, now(), id]);
   }
   const updated = get('SELECT * FROM payments WHERE id=?', [id]);
   if (updated) recordOutbox('payments', updated.uuid, 'upsert', updated);
@@ -1198,6 +1207,48 @@ export function updatePaymentStatus(id, status, actor, customPaymentDate) {
 
   persist();
   return { nextDueDate };
+}
+
+/**
+ * Modifica libera di un pagamento (correzione errori: importo, scadenza,
+ * tipologia) - non tocca lo stato né innesca provvigioni/rinnovi, quelli
+ * restano gestiti solo da updatePaymentStatus.
+ */
+export function updatePayment(id, data, actor) {
+  const existing = get('SELECT * FROM payments WHERE id=?', [id]);
+  if (!existing) throw new Error('Pagamento non trovato.');
+  run(
+    'UPDATE payments SET amount=?, due_date=?, payment_type=?, updated_at=? WHERE id=?',
+    [
+      data.amount !== undefined ? Number(data.amount) : existing.amount,
+      data.due_date !== undefined ? data.due_date : existing.due_date,
+      data.payment_type || existing.payment_type,
+      now(),
+      id,
+    ]
+  );
+  const updated = get('SELECT * FROM payments WHERE id=?', [id]);
+  recordOutbox('payments', updated.uuid, 'upsert', updated);
+  recordAudit(actor, 'UPDATE', 'payment', id, { amount: data.amount, due_date: data.due_date, payment_type: data.payment_type });
+  persist();
+  const clients = new Map(all('SELECT id, first_name, last_name FROM clients').map((c) => [c.id, c]));
+  return mapPayment(updated, clients);
+}
+
+/**
+ * Elimina (soft) un pagamento registrato per errore. Non tocca provvigioni o
+ * pagamenti collegati generati nel frattempo (es. la prossima scadenza già
+ * creata dal rinnovo automatico): quelli vanno rimossi manualmente se
+ * anch'essi sbagliati, per non cancellare a catena qualcosa che nel frattempo
+ * potrebbe essere già stato saldato o liquidato.
+ */
+export function deletePayment(id, actor) {
+  const existing = get('SELECT * FROM payments WHERE id=?', [id]);
+  if (!existing) throw new Error('Pagamento non trovato.');
+  run('UPDATE payments SET deleted=1, updated_at=? WHERE id=?', [now(), id]);
+  recordOutbox('payments', existing.uuid, 'delete', { uuid: existing.uuid });
+  recordAudit(actor, 'DELETE', 'payment', id, { amount: existing.amount, payment_type: existing.payment_type });
+  persist();
 }
 
 // ---------------------------------------------------------------------------

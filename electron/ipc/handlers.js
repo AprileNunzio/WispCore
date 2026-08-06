@@ -123,6 +123,8 @@ export function registerIpcHandlers(getWindow) {
   handle('payments:list', () => database.listPayments());
   handle('payments:add', (data) => database.addPayment(data, CURRENT_ACTOR()));
   handle('payments:updateStatus', (id, status, paymentDate) => database.updatePaymentStatus(id, status, CURRENT_ACTOR(), paymentDate));
+  handle('payments:update', (id, data) => database.updatePayment(id, data, CURRENT_ACTOR()));
+  handle('payments:delete', (id) => database.deletePayment(id, CURRENT_ACTOR()));
 
   // ---- Commissions ----
   handle('commissions:list', () => database.listCommissions());

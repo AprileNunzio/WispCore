@@ -54,6 +54,8 @@ contextBridge.exposeInMainWorld('wispcore', {
     list: () => invoke('payments:list'),
     add: (data) => invoke('payments:add', data),
     updateStatus: (id, status, paymentDate) => invoke('payments:updateStatus', id, status, paymentDate),
+    update: (id, data) => invoke('payments:update', id, data),
+    delete: (id) => invoke('payments:delete', id),
   },
   commissions: {
     list: () => invoke('commissions:list'),

@@ -130,6 +130,8 @@ export const dbService = {
   getPayments: (): Promise<Payment[]> => bridge().payments.list(),
   addPayment: (data: Omit<Payment, 'id'>): Promise<Payment> => bridge().payments.add(data),
   updatePaymentStatus: (id: number, status: PaymentStatus, paymentDate?: string) => bridge().payments.updateStatus(id, status, paymentDate),
+  updatePayment: (id: number, data: { amount?: number; due_date?: string; payment_type?: Payment['payment_type'] }) => bridge().payments.update(id, data),
+  deletePayment: (id: number) => bridge().payments.delete(id),
 
   // ---- Commissions ----
   getCommissions: (): Promise<Commission[]> => bridge().commissions.list(),

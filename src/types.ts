@@ -5,6 +5,8 @@ export interface Admin {
   created_at: string;
 }
 
+export type CollaboratorStatus = 'ACTIVE' | 'SUSPENDED' | 'BLOCKED';
+
 export interface Collaborator {
   id: number;
   uuid?: string;
@@ -14,6 +16,7 @@ export interface Collaborator {
   email?: string;
   default_commission_fee?: number;
   default_installation_commission?: number;
+  status?: CollaboratorStatus;
   created_at: string;
   updated_at?: string;
 }

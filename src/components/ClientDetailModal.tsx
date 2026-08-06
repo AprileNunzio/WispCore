@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { dbService } from '../dbService';
-import { useToast } from './Toast';
+import { useToast, useConfirm } from './Toast';
 import { ClientPaymentCalendar } from './ClientPaymentCalendar';
-import type { Client, ClientDetail, ClientStatus } from '../types';
+import { calculateClientReliability } from '../financialEngine';
+import type { Client, ClientDetail, ClientStatus, Payment, PaymentType } from '../types';
 import {
   ArrowLeft,
   Wallet,
@@ -17,10 +18,13 @@ import {
   History,
   Ban,
   ShieldCheck,
+  ShieldAlert,
   TrendingDown,
   TrendingUp,
   Receipt,
   Edit3,
+  Trash2,
+  Undo2,
 } from 'lucide-react';
 
 const STATUS_LABELS: Record<ClientStatus, string> = {
@@ -55,13 +59,23 @@ export const ClientDetailModal: React.FC<Props> = ({ clientId, onBack, onEdit })
   const [detail, setDetail] = useState<ClientDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const { notify } = useToast();
+  const confirmDialog = useConfirm();
 
-  useEffect(() => {
-    setLoading(true);
+  // Modale di correzione (importo/scadenza/tipo) per rimediare a un errore di registrazione,
+  // riusabile qui sull'estratto conto esattamente come nel Modulo Finanziario.
+  const [editModal, setEditModal] = useState<{ paymentId: number; amount: number; due_date: string; payment_type: PaymentType } | null>(null);
+
+  const loadDetail = () => {
     dbService.getClientDetail(clientId).then((d) => {
       setDetail(d);
       setLoading(false);
     });
+  };
+
+  useEffect(() => {
+    setLoading(true);
+    loadDetail();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientId]);
 
   const handleOpenCpe = async (ip: string) => {
@@ -77,12 +91,54 @@ export const ClientDetailModal: React.FC<Props> = ({ clientId, onBack, onEdit })
     }
   };
 
+  const handleUndoPaid = async (p: Payment) => {
+    const ok = await confirmDialog(
+      `Annullare il saldo di questo pagamento (€ ${p.amount.toFixed(2)})? Tornerà "In Attesa". ` +
+      `Nota: l'eventuale prossima scadenza già generata automaticamente e la provvigione collegata NON vengono rimosse in automatico.`
+    );
+    if (!ok) return;
+    await dbService.updatePaymentStatus(p.id, 'PENDING');
+    notify('Saldo annullato: il pagamento è tornato In Attesa.', 'success');
+    loadDetail();
+  };
+
+  const handleOpenEditModal = (p: Payment) => {
+    setEditModal({ paymentId: p.id, amount: p.amount, due_date: p.due_date, payment_type: p.payment_type });
+  };
+
+  const handleConfirmEdit = async () => {
+    if (!editModal) return;
+    await dbService.updatePayment(editModal.paymentId, {
+      amount: editModal.amount,
+      due_date: editModal.due_date,
+      payment_type: editModal.payment_type,
+    });
+    notify('Pagamento corretto.', 'success');
+    setEditModal(null);
+    loadDetail();
+  };
+
+  const handleDeletePayment = async (p: Payment) => {
+    const ok = await confirmDialog(`Eliminare definitivamente questo pagamento (€ ${p.amount.toFixed(2)}, scadenza ${p.due_date})? L'operazione non è reversibile dall'interfaccia.`);
+    if (!ok) return;
+    await dbService.deletePayment(p.id);
+    notify('Pagamento eliminato.', 'success');
+    loadDetail();
+  };
+
   // Calcoli Portafoglio & Estratto Conto Cliente
   const totalPaid = detail ? detail.payments.filter(p => p.status === 'PAID').reduce((acc, p) => acc + p.amount, 0) : 0;
   const totalPending = detail ? detail.payments.filter(p => p.status === 'PENDING').reduce((acc, p) => acc + p.amount, 0) : 0;
   const totalOverdue = detail ? detail.payments.filter(p => p.status === 'OVERDUE').reduce((acc, p) => acc + p.amount, 0) : 0;
   const totalOwed = totalPending + totalOverdue;
   const isUpToDate = totalOwed === 0;
+
+  // Indice Affidabilità: stessa formula usata in "Cattivi Pagatori" (Modulo
+  // Finanziario), qui calcolata per il singolo cliente aperto.
+  const reliability = useMemo(
+    () => (detail ? calculateClientReliability(detail.client, detail.payments) : null),
+    [detail]
+  );
 
   return (
     <div className="space-y-6 pb-12">
@@ -169,6 +225,44 @@ export const ClientDetailModal: React.FC<Props> = ({ clientId, onBack, onEdit })
                 </div>
               </div>
             </div>
+
+            {/* Indice Affidabilità - stessa metrica di "Cattivi Pagatori", per questo cliente */}
+            {reliability && (
+              <div className="glass-panel p-5 rounded-2xl border border-gray-200">
+                <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
+                  <h3 className="text-sm font-bold text-gray-900 flex items-center gap-2">
+                    <ShieldAlert size={16} className="text-rose-600" />
+                    <span>Indice Affidabilità</span>
+                  </h3>
+                  <span className={`inline-flex items-center gap-1.5 px-3 py-1 border text-xs font-semibold rounded-full ${
+                    reliability.riskBadgeColor === 'emerald' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                    reliability.riskBadgeColor === 'yellow' ? 'bg-yellow-50 text-yellow-800 border-yellow-200' :
+                    reliability.riskBadgeColor === 'amber' ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                    'bg-rose-50 text-rose-700 border-rose-200'
+                  }`}>
+                    {reliability.riskLabel}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                  <div className="p-3 bg-gray-50 rounded-xl border border-gray-200">
+                    <span className="text-gray-400 uppercase block mb-1">Punteggio</span>
+                    <span className="font-mono font-bold text-lg text-gray-900">{reliability.score}/100</span>
+                  </div>
+                  <div className="p-3 bg-gray-50 rounded-xl border border-gray-200">
+                    <span className="text-gray-400 uppercase block mb-1">Ritardo Medio</span>
+                    <span className="font-mono font-bold text-lg text-gray-900">{reliability.avgDaysLate}g</span>
+                  </div>
+                  <div className="p-3 bg-gray-50 rounded-xl border border-gray-200">
+                    <span className="text-gray-400 uppercase block mb-1">Insoluti Attivi</span>
+                    <span className="font-mono font-bold text-lg text-rose-600">{reliability.currentOverdueCount}</span>
+                  </div>
+                  <div className="p-3 bg-gray-50 rounded-xl border border-gray-200">
+                    <span className="text-gray-400 uppercase block mb-1">Max Ritardo</span>
+                    <span className="font-mono font-bold text-lg text-gray-900">{reliability.maxSingleDelayDays}g</span>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Dettagli Tecnici e Contratto */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
@@ -280,11 +374,12 @@ export const ClientDetailModal: React.FC<Props> = ({ clientId, onBack, onEdit })
                       <th className="p-2.5">Data Scadenza</th>
                       <th className="p-2.5">Data Incasso</th>
                       <th className="p-2.5">Stato Movimento</th>
+                      <th className="p-2.5 text-right">Azione</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
                     {detail.payments.length === 0 ? (
-                      <tr><td colSpan={5} className="p-4 text-center text-gray-400">Nessun movimento o addebito presente in archivio.</td></tr>
+                      <tr><td colSpan={6} className="p-4 text-center text-gray-400">Nessun movimento o addebito presente in archivio.</td></tr>
                     ) : (
                       detail.payments.map((p) => (
                         <tr key={p.id} className="hover:bg-gray-50 transition-colors">
@@ -312,6 +407,31 @@ export const ClientDetailModal: React.FC<Props> = ({ clientId, onBack, onEdit })
                                 <AlertTriangle size={11} /> Scaduto / Insoluto
                               </span>
                             )}
+                          </td>
+                          <td className="p-2.5 text-right space-x-1 whitespace-nowrap">
+                            {p.status === 'PAID' && (
+                              <button
+                                onClick={() => handleUndoPaid(p)}
+                                title="Annulla Saldo (torna In Attesa)"
+                                className="p-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 rounded cursor-pointer inline-flex"
+                              >
+                                <Undo2 size={12} />
+                              </button>
+                            )}
+                            <button
+                              onClick={() => handleOpenEditModal(p)}
+                              title="Modifica (correggi importo/scadenza/tipo)"
+                              className="p-1.5 bg-gray-100 hover:bg-gray-200 text-blue-600 border border-gray-200 rounded cursor-pointer inline-flex"
+                            >
+                              <Edit3 size={12} />
+                            </button>
+                            <button
+                              onClick={() => handleDeletePayment(p)}
+                              title="Elimina pagamento"
+                              className="p-1.5 bg-gray-100 hover:bg-rose-50 text-rose-600 border border-gray-200 hover:border-rose-300 rounded cursor-pointer inline-flex"
+                            >
+                              <Trash2 size={12} />
+                            </button>
                           </td>
                         </tr>
                       ))
@@ -358,6 +478,58 @@ export const ClientDetailModal: React.FC<Props> = ({ clientId, onBack, onEdit })
               </div>
             )}
 
+        </div>
+      )}
+
+      {editModal && (
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white rounded-3xl p-6 border border-gray-200 shadow-2xl space-y-4">
+            <h3 className="text-base font-bold text-gray-900">Correggi Pagamento</h3>
+            <p className="text-xs text-gray-500">Correggi un errore di registrazione: importo, scadenza o tipologia. Non tocca lo stato del pagamento.</p>
+
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">Tipologia Pagamento</label>
+              <select
+                value={editModal.payment_type}
+                onChange={(e) => setEditModal({ ...editModal, payment_type: e.target.value as PaymentType })}
+                className="w-full bg-white border border-gray-300 rounded-xl p-3 text-gray-900 text-sm"
+              >
+                <option value="RECURRING">Canone Ricorrente</option>
+                <option value="INSTALLATION">Costo Installazione Una-Tantum</option>
+                <option value="EXTRA">Intervento Tecnico Extra</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">Importo (€)</label>
+              <input
+                type="number"
+                step="0.01"
+                value={editModal.amount}
+                onChange={(e) => setEditModal({ ...editModal, amount: parseFloat(e.target.value) || 0 })}
+                className="w-full bg-white border border-gray-300 rounded-xl p-3 text-emerald-700 font-mono font-bold text-sm"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">Data Scadenza</label>
+              <input
+                type="date"
+                value={editModal.due_date}
+                onChange={(e) => setEditModal({ ...editModal, due_date: e.target.value })}
+                className="w-full bg-white border border-gray-300 rounded-xl p-3 text-gray-900 font-mono text-sm"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={() => setEditModal(null)} className="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl cursor-pointer text-xs">
+                Annulla
+              </button>
+              <button type="button" onClick={handleConfirmEdit} className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-xl cursor-pointer text-xs">
+                Salva Correzione
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

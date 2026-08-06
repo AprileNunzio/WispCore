@@ -100,7 +100,10 @@ export const ClientPaymentCalendar: React.FC<Props> = ({ payments }) => {
             ) : (
               selected.payments.map((p) => (
                 <div key={p.id} className="flex items-center justify-between text-xs bg-gray-50 rounded-lg px-2.5 py-1.5 border border-gray-200">
-                  <span className="text-gray-700">{PAYMENT_TYPE_LABELS[p.payment_type] || p.payment_type} • Scad. {p.due_date}</span>
+                  <span className="text-gray-700">
+                    {PAYMENT_TYPE_LABELS[p.payment_type] || p.payment_type} • Scad. {p.due_date}
+                    {p.status === 'PAID' && p.payment_date && <span className="text-emerald-700 font-semibold"> • Pagato il {p.payment_date}</span>}
+                  </span>
                   <span className="font-mono font-bold text-gray-900">€ {p.amount.toFixed(2)}</span>
                 </div>
               ))

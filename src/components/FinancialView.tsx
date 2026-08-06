@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { dbService } from '../dbService';
-import { useToast } from './Toast';
-import type { Payment, Client, ClientLite, PaymentStatus, Commission } from '../types';
-import { Wallet, CheckCircle2, Clock, AlertTriangle, Plus, Search, ShieldAlert } from 'lucide-react';
+import { useToast, useConfirm } from './Toast';
+import type { Payment, Client, ClientLite, PaymentStatus, PaymentType, Commission } from '../types';
+import { Wallet, CheckCircle2, Clock, AlertTriangle, Plus, Search, ShieldAlert, Edit3, Trash2, Undo2 } from 'lucide-react';
 import { localDateString } from '../dateUtils';
 import { BadPayersView } from './BadPayersView';
 import { 
@@ -14,6 +14,7 @@ import {
 
 export const FinancialView: React.FC = () => {
   const { notify } = useToast();
+  const confirmDialog = useConfirm();
   const [activeTab, setActiveTab] = useState<'PAYMENTS' | 'BAD_PAYERS'>('PAYMENTS');
   const [payments, setPayments] = useState<Payment[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
@@ -23,6 +24,9 @@ export const FinancialView: React.FC = () => {
 
   // Modale per segnare un pagamento come saldato con data incasso personalizzata
   const [payModal, setPayModal] = useState<{ paymentId: number; clientName: string; amount: number; paymentDate: string } | null>(null);
+
+  // Modale di correzione (importo/scadenza/tipo) per rimediare a un errore di registrazione
+  const [editModal, setEditModal] = useState<{ paymentId: number; amount: number; due_date: string; payment_type: PaymentType } | null>(null);
 
   // Ricerca live del cliente lato server
   const [clientQuery, setClientQuery] = useState('');
@@ -89,6 +93,41 @@ export const FinancialView: React.FC = () => {
   const handleUpdateStatusDirect = async (id: number, status: PaymentStatus) => {
     await dbService.updatePaymentStatus(id, status);
     notify('Stato pagamento aggiornato.', 'success');
+    loadData();
+  };
+
+  const handleUndoPaid = async (p: Payment) => {
+    const ok = await confirmDialog(
+      `Annullare il saldo di questo pagamento (€ ${p.amount.toFixed(2)})? Tornerà "In Attesa". ` +
+      `Nota: l'eventuale prossima scadenza già generata automaticamente e la provvigione collegata NON vengono rimosse in automatico - eliminale a mano se anch'esse sbagliate.`
+    );
+    if (!ok) return;
+    await dbService.updatePaymentStatus(p.id, 'PENDING');
+    notify('Saldo annullato: il pagamento è tornato In Attesa.', 'success');
+    loadData();
+  };
+
+  const handleOpenEditModal = (p: Payment) => {
+    setEditModal({ paymentId: p.id, amount: p.amount, due_date: p.due_date, payment_type: p.payment_type });
+  };
+
+  const handleConfirmEdit = async () => {
+    if (!editModal) return;
+    await dbService.updatePayment(editModal.paymentId, {
+      amount: editModal.amount,
+      due_date: editModal.due_date,
+      payment_type: editModal.payment_type,
+    });
+    notify('Pagamento corretto.', 'success');
+    setEditModal(null);
+    loadData();
+  };
+
+  const handleDeletePayment = async (p: Payment) => {
+    const ok = await confirmDialog(`Eliminare definitivamente questo pagamento (€ ${p.amount.toFixed(2)}, scadenza ${p.due_date})? L'operazione non è reversibile dall'interfaccia.`);
+    if (!ok) return;
+    await dbService.deletePayment(p.id);
+    notify('Pagamento eliminato.', 'success');
     loadData();
   };
 
@@ -280,7 +319,7 @@ export const FinancialView: React.FC = () => {
                             </span>
                           )}
                         </td>
-                        <td className="p-3 text-right space-x-1">
+                        <td className="p-3 text-right space-x-1 whitespace-nowrap">
                           {p.status !== 'PAID' && (
                             <button
                               onClick={() => handleOpenPayModal(p)}
@@ -297,6 +336,29 @@ export const FinancialView: React.FC = () => {
                               Segna Insoluto
                             </button>
                           )}
+                          {p.status === 'PAID' && (
+                            <button
+                              onClick={() => handleUndoPaid(p)}
+                              title="Annulla Saldo (torna In Attesa)"
+                              className="p-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 rounded cursor-pointer inline-flex"
+                            >
+                              <Undo2 size={13} />
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleOpenEditModal(p)}
+                            title="Modifica (correggi importo/scadenza/tipo)"
+                            className="p-1.5 bg-gray-100 hover:bg-gray-200 text-blue-600 border border-gray-200 rounded cursor-pointer inline-flex"
+                          >
+                            <Edit3 size={13} />
+                          </button>
+                          <button
+                            onClick={() => handleDeletePayment(p)}
+                            title="Elimina pagamento"
+                            className="p-1.5 bg-gray-100 hover:bg-rose-50 text-rose-600 border border-gray-200 hover:border-rose-300 rounded cursor-pointer inline-flex"
+                          >
+                            <Trash2 size={13} />
+                          </button>
                         </td>
                       </tr>
                     ))
@@ -426,6 +488,66 @@ export const FinancialView: React.FC = () => {
                 className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-xl cursor-pointer text-xs"
               >
                 Conferma Saldato
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editModal && (
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white rounded-3xl p-6 border border-gray-200 shadow-2xl space-y-4">
+            <h3 className="text-base font-bold text-gray-900">Correggi Pagamento</h3>
+            <p className="text-xs text-gray-500">Correggi un errore di registrazione: importo, scadenza o tipologia. Non tocca lo stato del pagamento.</p>
+
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">Tipologia Pagamento</label>
+              <select
+                value={editModal.payment_type}
+                onChange={(e) => setEditModal({ ...editModal, payment_type: e.target.value as PaymentType })}
+                className="w-full bg-white border border-gray-300 rounded-xl p-3 text-gray-900 text-sm"
+              >
+                <option value="RECURRING">Canone Ricorrente</option>
+                <option value="INSTALLATION">Costo Installazione Una-Tantum</option>
+                <option value="EXTRA">Intervento Tecnico Extra</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">Importo (€)</label>
+              <input
+                type="number"
+                step="0.01"
+                value={editModal.amount}
+                onChange={(e) => setEditModal({ ...editModal, amount: parseFloat(e.target.value) || 0 })}
+                className="w-full bg-white border border-gray-300 rounded-xl p-3 text-emerald-700 font-mono font-bold text-sm"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">Data Scadenza</label>
+              <input
+                type="date"
+                value={editModal.due_date}
+                onChange={(e) => setEditModal({ ...editModal, due_date: e.target.value })}
+                className="w-full bg-white border border-gray-300 rounded-xl p-3 text-gray-900 font-mono text-sm"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setEditModal(null)}
+                className="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl cursor-pointer text-xs"
+              >
+                Annulla
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmEdit}
+                className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-xl cursor-pointer text-xs"
+              >
+                Salva Correzione
               </button>
             </div>
           </div>

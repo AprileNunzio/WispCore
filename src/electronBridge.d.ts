@@ -78,6 +78,8 @@ export interface WispCoreBridge {
     list: () => Promise<Payment[]>;
     add: (data: Omit<Payment, 'id'>) => Promise<Payment>;
     updateStatus: (id: number, status: PaymentStatus, paymentDate?: string) => Promise<{ nextDueDate: string | null }>;
+    update: (id: number, data: { amount?: number; due_date?: string; payment_type?: Payment['payment_type'] }) => Promise<Payment>;
+    delete: (id: number) => Promise<void>;
   };
   commissions: {
     list: () => Promise<Commission[]>;
