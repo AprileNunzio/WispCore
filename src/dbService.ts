@@ -12,6 +12,8 @@ import type {
   Plan,
   EmailTemplate,
   SmtpSettings,
+  WhatsappSettings,
+  WhatsappTemplate,
   UpdateEvent,
   AdminRole,
   NetworkNode,
@@ -155,6 +157,15 @@ export const dbService = {
   setSmtpSettings: (settings: Partial<SmtpSettings> & { password?: string }) => bridge().smtp.setSettings(settings),
   testSmtpConnection: (settings?: Partial<SmtpSettings> & { password?: string }) => bridge().smtp.test(settings),
   sendPaymentReminder: (paymentId: number, templateId: number) => bridge().email.sendPaymentReminder(paymentId, templateId),
+
+  // WhatsApp Business (Meta Cloud API)
+  getWhatsappSettings: (): Promise<WhatsappSettings> => bridge().whatsapp.getSettings(),
+  setWhatsappSettings: (settings: Partial<WhatsappSettings> & { accessToken?: string }) => bridge().whatsapp.setSettings(settings),
+  testWhatsappConnection: (settings?: Partial<WhatsappSettings> & { accessToken?: string }) => bridge().whatsapp.test(settings),
+  getWhatsappTemplates: (): Promise<WhatsappTemplate[]> => bridge().whatsapp.listTemplates(),
+  syncWhatsappTemplates: (): Promise<WhatsappTemplate[]> => bridge().whatsapp.syncTemplates(),
+  refreshWhatsappTemplatesStatus: (): Promise<WhatsappTemplate[]> => bridge().whatsapp.refreshTemplatesStatus(),
+  sendWhatsappPaymentReminder: (paymentId: number, templateKey: string) => bridge().whatsapp.sendPaymentReminder(paymentId, templateKey),
 
   // ---- Backup & restore ----
   getBackupsList: () => bridge().backup.list(),

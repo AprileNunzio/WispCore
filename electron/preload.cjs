@@ -53,7 +53,7 @@ contextBridge.exposeInMainWorld('wispcore', {
   payments: {
     list: () => invoke('payments:list'),
     add: (data) => invoke('payments:add', data),
-    updateStatus: (id, status) => invoke('payments:updateStatus', id, status),
+    updateStatus: (id, status, paymentDate) => invoke('payments:updateStatus', id, status, paymentDate),
   },
   commissions: {
     list: () => invoke('commissions:list'),
@@ -84,6 +84,15 @@ contextBridge.exposeInMainWorld('wispcore', {
   },
   email: {
     sendPaymentReminder: (paymentId, templateId) => invoke('email:sendPaymentReminder', { paymentId, templateId }),
+  },
+  whatsapp: {
+    getSettings: () => invoke('whatsapp:getSettings'),
+    setSettings: (settings) => invoke('whatsapp:setSettings', settings),
+    test: (settings) => invoke('whatsapp:test', settings),
+    listTemplates: () => invoke('whatsapp:listTemplates'),
+    syncTemplates: () => invoke('whatsapp:syncTemplates'),
+    refreshTemplatesStatus: () => invoke('whatsapp:refreshTemplatesStatus'),
+    sendPaymentReminder: (paymentId, templateKey) => invoke('whatsapp:sendPaymentReminder', { paymentId, templateKey }),
   },
   backup: {
     list: () => invoke('backup:list'),

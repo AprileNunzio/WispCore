@@ -11,6 +11,7 @@ const DEFAULT_CONFIG = {
   lockedUntil: null,
   lastBackupAt: null,
   emailTemplatesSeeded: false,
+  whatsappTemplatesSeeded: false,
   sync: {
     enabled: false,
     host: '',
@@ -35,6 +36,16 @@ const DEFAULT_CONFIG = {
     passwordProtection: null,
     fromName: 'WispCore',
     fromEmail: '',
+  },
+  whatsapp: {
+    enabled: false,
+    phoneNumberId: '', // ID numero WhatsApp Business (Meta Developer Console)
+    wabaId: '', // WhatsApp Business Account ID, necessario per creare/leggere i template
+    accessTokenEncrypted: null,
+    accessTokenProtection: null,
+    displayName: '', // solo informativo: il nome verificato è quello impostato su Meta Business Manager
+    apiVersion: 'v20.0',
+    defaultCountryCode: '39', // usato per normalizzare i numeri italiani senza prefisso internazionale
   },
   updater: {
     downloadedVersion: null, // ultima versione già scaricata (per non riscaricarla ad ogni avvio)
@@ -61,6 +72,7 @@ export function readConfig() {
       ...parsed,
       sync: { ...DEFAULT_CONFIG.sync, ...(parsed.sync || {}) },
       smtp: { ...DEFAULT_CONFIG.smtp, ...(parsed.smtp || {}) },
+      whatsapp: { ...DEFAULT_CONFIG.whatsapp, ...(parsed.whatsapp || {}) },
       updater: { ...DEFAULT_CONFIG.updater, ...(parsed.updater || {}) },
       secondaryBackup: { ...DEFAULT_CONFIG.secondaryBackup, ...(parsed.secondaryBackup || {}) },
     };

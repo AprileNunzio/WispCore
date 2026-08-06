@@ -264,6 +264,25 @@ CREATE TABLE IF NOT EXISTS beta_monitoring_nodes (
   updated_at TEXT NOT NULL,
   deleted INTEGER NOT NULL DEFAULT 0
 );
+
+-- Template messaggio WhatsApp Business (Meta Cloud API). A differenza dei
+-- template email, il testo va approvato da Meta prima di poter essere usato
+-- per scrivere per primi a un cliente: meta_status riflette l'esito reale
+-- restituito dalla piattaforma, non uno stato locale ottimistico.
+CREATE TABLE IF NOT EXISTS whatsapp_templates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  uuid TEXT UNIQUE NOT NULL,
+  template_key TEXT UNIQUE NOT NULL,
+  display_name TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'UTILITY',
+  language TEXT NOT NULL DEFAULT 'it',
+  body_text TEXT NOT NULL,
+  meta_status TEXT NOT NULL DEFAULT 'NON_SINCRONIZZATO',
+  meta_rejection_reason TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted INTEGER NOT NULL DEFAULT 0
+);
 `;
 
 /** Adds columns that may be missing on a database created by an older version of the app. */
@@ -457,6 +476,60 @@ function seedDefaultEmailTemplatesIfNeeded() {
   });
 }
 
+// Template WhatsApp Business precompilati (categoria Meta "UTILITY": comunicazioni
+// transazionali legate a un servizio già attivo, non promozionali - questo evita la
+// richiesta di un opt-in marketing separato ed è la categoria corretta per solleciti
+// e promemoria di scadenza). Placeholder posizionali {{1}}..{{4}} nell'ordine in cui
+// vengono valorizzati da whatsapp:sendPaymentReminder: nome cliente, tipo pagamento,
+// importo, data di scadenza. Il testo va comunque approvato da Meta prima dell'uso:
+// vedi whatsapp.js -> syncTemplatesToMeta().
+const DEFAULT_WHATSAPP_TEMPLATES = [
+  {
+    template_key: 'promemoria_scadenza_wispcore',
+    display_name: 'Promemoria Scadenza Imminente',
+    category: 'UTILITY',
+    language: 'it',
+    body_text: 'Gentile {{1}}, Le ricordiamo che il pagamento {{2}} di € {{3}} è in scadenza il giorno {{4}}. La invitiamo a regolarizzare la posizione entro tale data per garantire la continuità del servizio. Team Tecnico WISP.',
+  },
+  {
+    template_key: 'sollecito_pagamento_wispcore',
+    display_name: 'Sollecito Pagamento Scaduto',
+    category: 'UTILITY',
+    language: 'it',
+    body_text: 'Gentile {{1}}, il pagamento {{2}} di € {{3}}, con scadenza il {{4}}, risulta ancora non saldato. La invitiamo a provvedere quanto prima per evitare eventuali limitazioni del servizio. Per chiarimenti contatti il nostro ufficio amministrativo. Team Tecnico WISP.',
+  },
+];
+
+/**
+ * Crea i 2 template WhatsApp professionali di default alla primissima
+ * esecuzione (stesso schema idempotente del seed dei template email: un
+ * flag in config evita di ricrearli se l'utente li elimina in seguito).
+ * Restano in stato "NON_SINCRONIZZATO" finché l'operatore non preme
+ * "Sincronizza Template su Meta" nelle Impostazioni.
+ */
+function seedDefaultWhatsappTemplatesIfNeeded() {
+  const config = readConfig();
+  if (config.whatsappTemplatesSeeded) return;
+
+  const existing = get('SELECT COUNT(*) as n FROM whatsapp_templates')?.n || 0;
+  if (existing === 0) {
+    for (const t of DEFAULT_WHATSAPP_TEMPLATES) {
+      const rowUuid = uuid();
+      const ts = now();
+      run(
+        `INSERT INTO whatsapp_templates (uuid, template_key, display_name, category, language, body_text, meta_status, created_at, updated_at, deleted)
+         VALUES (?, ?, ?, ?, ?, ?, 'NON_SINCRONIZZATO', ?, ?, 0)`,
+        [rowUuid, t.template_key, t.display_name, t.category, t.language, t.body_text, ts, ts]
+      );
+    }
+    appendLog(`Creati ${DEFAULT_WHATSAPP_TEMPLATES.length} template WhatsApp di default.`);
+  }
+
+  updateConfig((c) => {
+    c.whatsappTemplatesSeeded = true;
+  });
+}
+
 function now() {
   return new Date().toISOString();
 }
@@ -511,6 +584,7 @@ export async function init() {
   db.run(SCHEMA);
   runDefensiveMigrations();
   seedDefaultEmailTemplatesIfNeeded();
+  seedDefaultWhatsappTemplatesIfNeeded();
   persist();
   appendLog('Database inizializzato correttamente.');
   return db;
@@ -1439,6 +1513,25 @@ export function deleteEmailTemplate(id, actor) {
   run('UPDATE email_templates SET deleted=1, updated_at=? WHERE id=?', [now(), id]);
   recordAudit(actor, 'DELETE', 'email_template', id, null);
   persist();
+}
+
+// ---------------------------------------------------------------------------
+// WhatsApp templates (Meta Cloud API)
+// ---------------------------------------------------------------------------
+
+export function listWhatsappTemplates() {
+  return all('SELECT * FROM whatsapp_templates WHERE deleted = 0 ORDER BY id ASC');
+}
+
+/** Aggiorna l'esito reale della sincronizzazione con Meta per un template (chiamata da whatsapp:syncTemplates). */
+export function setWhatsappTemplateMetaStatus(templateKey, { status, rejectionReason }, actor) {
+  run('UPDATE whatsapp_templates SET meta_status=?, meta_rejection_reason=?, updated_at=? WHERE template_key=?', [
+    status, rejectionReason || null, now(), templateKey,
+  ]);
+  const updated = get('SELECT * FROM whatsapp_templates WHERE template_key=?', [templateKey]);
+  recordAudit(actor, 'UPDATE', 'whatsapp_template', updated?.id ?? null, { template_key: templateKey, status });
+  persist();
+  return updated;
 }
 
 // ---------------------------------------------------------------------------

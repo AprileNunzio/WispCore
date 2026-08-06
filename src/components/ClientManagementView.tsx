@@ -3,9 +3,11 @@ import { dbService } from '../dbService';
 import { useToast, useConfirm } from './Toast';
 import { ClientDetailModal } from './ClientDetailModal';
 import { ClientFormModal } from './ClientFormModal';
+import { ClientYearStrip } from './ClientYearStrip';
 import { MikrotikImportModal } from './beta/MikrotikImportModal';
-import type { Client, ClientStatus, Collaborator, NetworkNode, Plan, ClientSavePayload } from '../types';
+import type { Client, ClientStatus, Collaborator, NetworkNode, Plan, ClientSavePayload, Payment } from '../types';
 import { BILLING_CYCLE_INFO } from '../types';
+import { localDateString } from '../dateUtils';
 import {
   Users,
   Plus,
@@ -28,7 +30,10 @@ import {
   Table2,
   Upload,
   Filter,
-  HardDrive
+  HardDrive,
+  ChevronLeft,
+  ChevronRight,
+  CalendarRange
 } from 'lucide-react';
 
 interface Props {
@@ -71,23 +76,38 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
   const [detailClientId, setDetailClientId] = useState<number | null>(null);
   const [isExportingCsv, setIsExportingCsv] = useState(false);
   const [isImportingCsv, setIsImportingCsv] = useState(false);
+  const [payments, setPayments] = useState<Payment[]>([]);
+  const [stripYear, setStripYear] = useState(() => Number(localDateString().slice(0, 4)));
 
   useEffect(() => {
     loadData();
   }, []);
 
   const loadData = async () => {
-    const [c, collabs, p, nodes] = await Promise.all([
+    const [c, collabs, p, nodes, pay] = await Promise.all([
       dbService.getClients(),
       dbService.getCollaborators(),
       dbService.getPlans(),
       dbService.getNetworkNodes(),
+      dbService.getPayments(),
     ]);
     setClients(c);
     setCollaborators(collabs);
     setPlans(p);
     setNetworkNodes(nodes);
+    setPayments(pay);
   };
+
+  // Raggruppati una sola volta per evitare un filter() su tutti i pagamenti per ogni singola scheda cliente.
+  const paymentsByClientId = React.useMemo(() => {
+    const map = new Map<number, Payment[]>();
+    for (const p of payments) {
+      const list = map.get(p.client_id) || [];
+      list.push(p);
+      map.set(p.client_id, list);
+    }
+    return map;
+  }, [payments]);
 
   const handleExportCsv = async () => {
     setIsExportingCsv(true);
@@ -312,6 +332,19 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
           <option value="ALL">Tutti i collaboratori</option>
           {collaborators.map((c) => <option key={c.id} value={c.id}>{c.first_name} {c.last_name}</option>)}
         </select>
+
+        {/* Anno del calendario pagamenti mostrato sotto ogni scheda cliente - un solo
+            selettore condiviso, così tutte le strisce restano confrontabili tra loro. */}
+        <div className="flex items-center gap-1 ml-auto bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5">
+          <CalendarRange size={13} className="text-gray-400 mr-1" />
+          <button onClick={() => setStripYear((y) => y - 1)} className="p-0.5 text-gray-500 hover:text-gray-900 cursor-pointer" title="Anno precedente">
+            <ChevronLeft size={14} />
+          </button>
+          <span className="text-xs font-mono font-bold text-gray-700 w-10 text-center">{stripYear}</span>
+          <button onClick={() => setStripYear((y) => y + 1)} className="p-0.5 text-gray-500 hover:text-gray-900 cursor-pointer" title="Anno successivo">
+            <ChevronRight size={14} />
+          </button>
+        </div>
       </div>
 
       {/* Lista Schede Clienti */}
@@ -481,6 +514,11 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
                   <div className="text-gray-600 text-xs truncate">{client.phone || client.email || 'Nessun recapito'}</div>
                   <div className="text-gray-400 text-[11px] truncate">{client.notes || 'Nessuna nota aggiuntiva'}</div>
                 </div>
+              </div>
+
+              <div className="pt-3 mt-1 border-t border-gray-100">
+                <div className="text-[10px] text-gray-400 uppercase font-semibold mb-1.5">Canone {stripYear} — verde saldato, giallo in attesa, rosso insoluto</div>
+                <ClientYearStrip payments={paymentsByClientId.get(client.id) || []} year={stripYear} />
               </div>
             </div>
           ))

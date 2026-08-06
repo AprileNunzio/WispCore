@@ -20,8 +20,10 @@ import {
   HardDrive,
   FolderOpen,
   AlertTriangle,
+  MessageCircle,
+  RotateCw,
 } from 'lucide-react';
-import type { AppPaths, BackupInfo, SecondaryBackupSettings, SyncSettings, AuditLogEntry, UpdateCheckResult, SmtpSettings } from '../types';
+import type { AppPaths, BackupInfo, SecondaryBackupSettings, SyncSettings, AuditLogEntry, UpdateCheckResult, SmtpSettings, WhatsappSettings, WhatsappTemplate } from '../types';
 
 export const SettingsView: React.FC = () => {
   const { notify } = useToast();
@@ -57,6 +59,12 @@ export const SettingsView: React.FC = () => {
   const [smtpForm, setSmtpForm] = useState({ host: '', port: 587, secure: false, user: '', password: '', fromName: 'WispCore', fromEmail: '' });
   const [testingSmtp, setTestingSmtp] = useState(false);
 
+  const [whatsapp, setWhatsapp] = useState<WhatsappSettings | null>(null);
+  const [whatsappForm, setWhatsappForm] = useState({ phoneNumberId: '', wabaId: '', accessToken: '', displayName: '' });
+  const [testingWhatsapp, setTestingWhatsapp] = useState(false);
+  const [whatsappTemplates, setWhatsappTemplates] = useState<WhatsappTemplate[]>([]);
+  const [syncingTemplates, setSyncingTemplates] = useState(false);
+
   useEffect(() => {
     loadAll();
   }, []);
@@ -86,7 +94,7 @@ export const SettingsView: React.FC = () => {
   };
 
   const loadAll = async () => {
-    const [v, p, b, log, s, sm, secBackup] = await Promise.all([
+    const [v, p, b, log, s, sm, secBackup, wa, waTemplates] = await Promise.all([
       dbService.getAppVersion(),
       dbService.getAppPaths(),
       dbService.getBackupsList(),
@@ -94,6 +102,8 @@ export const SettingsView: React.FC = () => {
       dbService.getSyncSettings(),
       dbService.getSmtpSettings(),
       dbService.getSecondaryBackupSettings(),
+      dbService.getWhatsappSettings(),
+      dbService.getWhatsappTemplates(),
     ]);
     setAppVersion(v);
     setPaths(p);
@@ -105,6 +115,9 @@ export const SettingsView: React.FC = () => {
     setSmtpForm({ host: sm.host, port: sm.port, secure: sm.secure, user: sm.user, password: '', fromName: sm.fromName, fromEmail: sm.fromEmail });
     setSecondaryBackup(secBackup);
     setSecondaryDirDraft(secBackup.directory);
+    setWhatsapp(wa);
+    setWhatsappForm({ phoneNumberId: wa.phoneNumberId, wabaId: wa.wabaId, accessToken: '', displayName: wa.displayName });
+    setWhatsappTemplates(waTemplates);
   };
 
   const handlePickSecondaryDir = async () => {
@@ -152,6 +165,65 @@ export const SettingsView: React.FC = () => {
       notify(err instanceof Error ? err.message : 'Errore di connessione.', 'error');
     } finally {
       setTestingSmtp(false);
+    }
+  };
+
+  const handleSaveWhatsappSettings = async (enabled: boolean) => {
+    try {
+      const updated = await dbService.setWhatsappSettings({ ...whatsappForm, enabled });
+      setWhatsapp(updated);
+      notify('Configurazione WhatsApp Business salvata.', 'success');
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Errore nel salvataggio.', 'error');
+    }
+  };
+
+  const handleTestWhatsapp = async () => {
+    setTestingWhatsapp(true);
+    try {
+      const result = await dbService.testWhatsappConnection(whatsappForm.accessToken ? whatsappForm : { ...whatsappForm, accessToken: undefined });
+      if (result.ok) notify(`Connessione riuscita: numero verificato "${result.verifiedName || result.displayPhoneNumber}".`, 'success');
+      else notify(`Connessione fallita: ${result.error}`, 'error');
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Errore di connessione.', 'error');
+    } finally {
+      setTestingWhatsapp(false);
+    }
+  };
+
+  const handleSyncWhatsappTemplates = async () => {
+    setSyncingTemplates(true);
+    try {
+      const updated = await dbService.syncWhatsappTemplates();
+      setWhatsappTemplates(updated);
+      notify('Template inviati/verificati su Meta. Lo stato di approvazione può richiedere qualche minuto.', 'success');
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Errore nella sincronizzazione dei template.', 'error');
+    } finally {
+      setSyncingTemplates(false);
+    }
+  };
+
+  const handleRefreshWhatsappTemplatesStatus = async () => {
+    setSyncingTemplates(true);
+    try {
+      const updated = await dbService.refreshWhatsappTemplatesStatus();
+      setWhatsappTemplates(updated);
+      notify('Stato dei template aggiornato.', 'success');
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "Errore nell'aggiornamento dello stato.", 'error');
+    } finally {
+      setSyncingTemplates(false);
+    }
+  };
+
+  const whatsappStatusBadge = (status: WhatsappTemplate['meta_status']) => {
+    switch (status) {
+      case 'APPROVED': return <span className="text-[11px] px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full font-semibold">Approvato</span>;
+      case 'PENDING': return <span className="text-[11px] px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-full font-semibold">In revisione</span>;
+      case 'REJECTED': return <span className="text-[11px] px-2 py-0.5 bg-rose-50 text-rose-700 border border-rose-200 rounded-full font-semibold">Rifiutato</span>;
+      case 'ERRORE': return <span className="text-[11px] px-2 py-0.5 bg-rose-50 text-rose-700 border border-rose-200 rounded-full font-semibold">Errore</span>;
+      default: return <span className="text-[11px] px-2 py-0.5 bg-gray-100 text-gray-500 border border-gray-200 rounded-full font-semibold">Non sincronizzato</span>;
     }
   };
 
@@ -759,6 +831,102 @@ export const SettingsView: React.FC = () => {
               className="px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl cursor-pointer">
               Salva & Attiva Invio Email
             </button>
+          </div>
+        </div>
+
+        {/* --- WhatsApp Business (Meta Cloud API) --- */}
+        <div className="glass-panel p-6 rounded-2xl border border-gray-200 space-y-4 lg:col-span-2">
+          <div className="flex items-center gap-3">
+            <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl border border-emerald-200">
+              <MessageCircle size={22} />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-gray-900">WhatsApp Business (Meta Cloud API)</h3>
+              <p className="text-sm text-gray-500">Canale ufficiale Meta per solleciti e promemoria di scadenza - non usa WhatsApp Web/Desktop</p>
+            </div>
+            {whatsapp?.enabled && (
+              <span className="ml-auto text-[11px] px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full font-semibold shrink-0">Attivo</span>
+            )}
+          </div>
+
+          <div className="text-xs bg-blue-50 text-blue-700 border border-blue-200 rounded-lg px-3 py-2 space-y-1">
+            <p className="font-semibold">Da dove recuperare questi dati:</p>
+            <p>Meta for Developers → la tua App → WhatsApp → API Setup: lì trovi <strong>Phone Number ID</strong>, <strong>WhatsApp Business Account ID</strong> e puoi generare un <strong>Access Token</strong> permanente (System User, permesso <code>whatsapp_business_messaging</code> + <code>whatsapp_business_management</code>).</p>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+            <div>
+              <label className="text-gray-500 block mb-1">Phone Number ID</label>
+              <input type="text" placeholder="es. 109876543210987" value={whatsappForm.phoneNumberId}
+                onChange={(e) => setWhatsappForm({ ...whatsappForm, phoneNumberId: e.target.value })}
+                className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-gray-900 font-mono" />
+            </div>
+            <div>
+              <label className="text-gray-500 block mb-1">WhatsApp Business Account ID (WABA ID)</label>
+              <input type="text" placeholder="es. 123456789012345" value={whatsappForm.wabaId}
+                onChange={(e) => setWhatsappForm({ ...whatsappForm, wabaId: e.target.value })}
+                className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-gray-900 font-mono" />
+            </div>
+            <div>
+              <label className="text-gray-500 block mb-1">Access Token {whatsapp?.hasAccessToken && <span className="text-gray-400">(già impostato)</span>}</label>
+              <input type="password" value={whatsappForm.accessToken}
+                onChange={(e) => setWhatsappForm({ ...whatsappForm, accessToken: e.target.value })}
+                className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-gray-900 font-mono" />
+            </div>
+            <div>
+              <label className="text-gray-500 block mb-1">Nome Mittente (solo interno/promemoria)</label>
+              <input type="text" value={whatsappForm.displayName}
+                onChange={(e) => setWhatsappForm({ ...whatsappForm, displayName: e.target.value })}
+                className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-gray-900" />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <button onClick={handleTestWhatsapp} disabled={testingWhatsapp}
+              className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold rounded-xl cursor-pointer disabled:opacity-50">
+              {testingWhatsapp ? 'Test in corso...' : 'Testa Connessione'}
+            </button>
+            <button onClick={() => handleSaveWhatsappSettings(false)}
+              className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold rounded-xl cursor-pointer">
+              Salva Configurazione
+            </button>
+            <button onClick={() => handleSaveWhatsappSettings(true)}
+              className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold rounded-xl cursor-pointer">
+              Salva & Attiva Invio WhatsApp
+            </button>
+          </div>
+
+          <div className="border-t border-gray-100 pt-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-bold text-gray-900">Template Professionali Preimpostati</h4>
+              <div className="flex gap-2">
+                <button onClick={handleRefreshWhatsappTemplatesStatus} disabled={syncingTemplates}
+                  className="px-2.5 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold rounded-lg cursor-pointer disabled:opacity-50 inline-flex items-center gap-1">
+                  <RotateCw size={12} className={syncingTemplates ? 'animate-spin' : ''} /> Aggiorna Stato
+                </button>
+                <button onClick={handleSyncWhatsappTemplates} disabled={syncingTemplates}
+                  className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg cursor-pointer disabled:opacity-50">
+                  {syncingTemplates ? 'Sincronizzazione...' : 'Sincronizza Template su Meta'}
+                </button>
+              </div>
+            </div>
+            <p className="text-xs text-gray-500">
+              Ogni template va approvato da Meta prima di poter essere usato (di norma pochi minuti, a volte più a lungo). Finché non risulta "Approvato" non è possibile inviare messaggi con quel template.
+            </p>
+            <div className="space-y-2">
+              {whatsappTemplates.map((t) => (
+                <div key={t.id} className="p-3 bg-gray-50 rounded-xl border border-gray-200">
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <span className="font-semibold text-sm text-gray-900">{t.display_name}</span>
+                    {whatsappStatusBadge(t.meta_status)}
+                  </div>
+                  <p className="text-xs text-gray-500 font-mono">{t.body_text}</p>
+                  {t.meta_rejection_reason && (
+                    <p className="text-xs text-rose-600 mt-1">Motivo: {t.meta_rejection_reason}</p>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 

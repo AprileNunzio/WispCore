@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { dbService } from '../dbService';
 import { useToast } from './Toast';
+import { ClientPaymentCalendar } from './ClientPaymentCalendar';
 import type { ClientDetail, ClientStatus } from '../types';
 import {
   X,
@@ -245,6 +246,9 @@ export const ClientDetailModal: React.FC<Props> = ({ clientId, onClose }) => {
                 </div>
               </div>
             )}
+
+            {/* Calendario Mensile Pagamenti */}
+            <ClientPaymentCalendar payments={detail.payments} />
 
             {/* Tabella Estratto Conto Movimenti */}
             <div>

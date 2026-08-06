@@ -1,8 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { dbService } from '../dbService';
 import { useToast } from './Toast';
-import type { Payment, Client, Collaborator, EmailTemplate, PaymentStatus } from '../types';
-import { CalendarClock, AlertTriangle, Clock, CheckCircle2, Mail, Filter, Send } from 'lucide-react';
+import type { Payment, Client, Collaborator, EmailTemplate, PaymentStatus, WhatsappTemplate } from '../types';
+import { CalendarClock, AlertTriangle, Clock, CheckCircle2, Mail, Filter, Send, MessageCircle } from 'lucide-react';
+
+// I 2 template preimpostati (vedi database.js) selezionati automaticamente in base
+// allo stato del pagamento: OVERDUE usa il sollecito, PENDING il promemoria di scadenza.
+const WHATSAPP_TEMPLATE_KEY_BY_STATUS: Partial<Record<PaymentStatus, string>> = {
+  PENDING: 'promemoria_scadenza_wispcore',
+  OVERDUE: 'sollecito_pagamento_wispcore',
+};
 
 export const ScadenzeView: React.FC = () => {
   const { notify } = useToast();
@@ -19,17 +26,23 @@ export const ScadenzeView: React.FC = () => {
   const [sendingId, setSendingId] = useState<number | null>(null);
   const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
 
+  const [whatsappEnabled, setWhatsappEnabled] = useState(false);
+  const [whatsappTemplates, setWhatsappTemplates] = useState<WhatsappTemplate[]>([]);
+  const [sendingWhatsappId, setSendingWhatsappId] = useState<number | null>(null);
+
   useEffect(() => {
     loadData();
   }, []);
 
   const loadData = async () => {
-    const [p, c, collabs, tmpl, smtp] = await Promise.all([
+    const [p, c, collabs, tmpl, smtp, wa, waTemplates] = await Promise.all([
       dbService.getPayments(),
       dbService.getClients(),
       dbService.getCollaborators(),
       dbService.getEmailTemplates(),
       dbService.getSmtpSettings(),
+      dbService.getWhatsappSettings(),
+      dbService.getWhatsappTemplates(),
     ]);
     setPayments(p);
     setClients(c);
@@ -37,6 +50,8 @@ export const ScadenzeView: React.FC = () => {
     setTemplates(tmpl);
     setSmtpEnabled(smtp.enabled);
     if (tmpl.length > 0) setSelectedTemplateId(tmpl[0].id);
+    setWhatsappEnabled(wa.enabled);
+    setWhatsappTemplates(waTemplates);
   };
 
   const clientsById = useMemo(() => new Map(clients.map((c) => [c.id, c])), [clients]);
@@ -74,6 +89,34 @@ export const ScadenzeView: React.FC = () => {
     }
   };
 
+  /** Trova il template WhatsApp approvato adatto allo stato del pagamento (promemoria o sollecito). */
+  const getWhatsappTemplateForPayment = (payment: Payment) => {
+    const key = WHATSAPP_TEMPLATE_KEY_BY_STATUS[payment.status];
+    if (!key) return null;
+    return whatsappTemplates.find((t) => t.template_key === key) || null;
+  };
+
+  const handleSendWhatsapp = async (payment: Payment) => {
+    const template = getWhatsappTemplateForPayment(payment);
+    if (!template) {
+      notify('Nessun template WhatsApp disponibile per questo stato.', 'error');
+      return;
+    }
+    if (template.meta_status !== 'APPROVED') {
+      notify(`Il template "${template.display_name}" non è ancora approvato da Meta (stato: ${template.meta_status}).`, 'error');
+      return;
+    }
+    setSendingWhatsappId(payment.id);
+    try {
+      await dbService.sendWhatsappPaymentReminder(payment.id, template.template_key);
+      notify(`Messaggio WhatsApp inviato a ${clientsById.get(payment.client_id)?.phone}.`, 'success');
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "Errore durante l'invio WhatsApp.", 'error');
+    } finally {
+      setSendingWhatsappId(null);
+    }
+  };
+
   return (
     <div className="space-y-6 pb-12">
       <div className="bg-white/80 glass-panel rounded-2xl p-6 border border-gray-200">
@@ -81,12 +124,19 @@ export const ScadenzeView: React.FC = () => {
           <CalendarClock className="text-amber-600" size={24} />
           <span>Scadenzario Dettagliato</span>
         </h1>
-        <p className="text-gray-500 text-sm mt-1">Tutte le scadenze di tutti i clienti, filtrabili e con invio solleciti via email</p>
-        {!smtpEnabled && (
-          <div className="mt-3 text-xs bg-amber-50 text-amber-700 border border-amber-200 rounded-lg px-3 py-2 inline-block">
-            L'invio email non è attivo. Configuralo in Impostazioni → SMTP per poter inviare i solleciti.
-          </div>
-        )}
+        <p className="text-gray-500 text-sm mt-1">Tutte le scadenze di tutti i clienti, filtrabili e con invio solleciti via email o WhatsApp</p>
+        <div className="flex flex-wrap gap-2 mt-3">
+          {!smtpEnabled && (
+            <div className="text-xs bg-amber-50 text-amber-700 border border-amber-200 rounded-lg px-3 py-2 inline-block">
+              L'invio email non è attivo. Configuralo in Impostazioni → SMTP per poter inviare i solleciti.
+            </div>
+          )}
+          {!whatsappEnabled && (
+            <div className="text-xs bg-amber-50 text-amber-700 border border-amber-200 rounded-lg px-3 py-2 inline-block">
+              L'invio WhatsApp non è attivo. Configuralo in Impostazioni → WhatsApp Business per poter inviare i solleciti.
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="glass-panel rounded-2xl p-5 border border-gray-200">
@@ -148,6 +198,7 @@ export const ScadenzeView: React.FC = () => {
               <tr>
                 <th className="p-3">Cliente</th>
                 <th className="p-3">Email</th>
+                <th className="p-3">Telefono</th>
                 <th className="p-3">Collaboratore</th>
                 <th className="p-3">Tipo</th>
                 <th className="p-3 font-mono">Importo</th>
@@ -158,14 +209,17 @@ export const ScadenzeView: React.FC = () => {
             </thead>
             <tbody className="divide-y divide-gray-100">
               {filtered.length === 0 ? (
-                <tr><td colSpan={8} className="p-6 text-center text-gray-400">Nessuna scadenza corrisponde ai filtri.</td></tr>
+                <tr><td colSpan={9} className="p-6 text-center text-gray-400">Nessuna scadenza corrisponde ai filtri.</td></tr>
               ) : (
                 filtered.map((p) => {
                   const client = clientsById.get(p.client_id);
+                  const waTemplate = getWhatsappTemplateForPayment(p);
+                  const waReady = whatsappEnabled && !!client?.phone && !!waTemplate && waTemplate.meta_status === 'APPROVED';
                   return (
                     <tr key={p.id} className="hover:bg-gray-50">
                       <td className="p-3 font-semibold text-gray-900">{p.client_name}</td>
                       <td className="p-3 text-xs text-gray-400">{client?.email || '—'}</td>
+                      <td className="p-3 text-xs font-mono text-gray-400">{client?.phone || '—'}</td>
                       <td className="p-3 text-xs">{client?.collaborator_name || '—'}</td>
                       <td className="p-3"><span className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded font-mono text-xs">{p.payment_type}</span></td>
                       <td className="p-3 font-mono font-bold text-gray-900">€ {p.amount.toFixed(2)}</td>
@@ -175,7 +229,7 @@ export const ScadenzeView: React.FC = () => {
                         {p.status === 'PENDING' && <span className="inline-flex items-center gap-1 text-xs text-amber-700"><Clock size={12} /> In Attesa</span>}
                         {p.status === 'OVERDUE' && <span className="inline-flex items-center gap-1 text-xs text-rose-700"><AlertTriangle size={12} /> Insoluto</span>}
                       </td>
-                      <td className="p-3 text-right">
+                      <td className="p-3 text-right space-x-1 whitespace-nowrap">
                         {p.status !== 'PAID' && client?.email && (
                           <button
                             onClick={() => handleSendReminder(p)}
@@ -183,7 +237,18 @@ export const ScadenzeView: React.FC = () => {
                             className="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded font-medium cursor-pointer text-xs disabled:opacity-40 inline-flex items-center gap-1"
                           >
                             {sendingId === p.id ? <Send size={12} className="animate-pulse" /> : <Mail size={12} />}
-                            Invia
+                            Email
+                          </button>
+                        )}
+                        {p.status !== 'PAID' && client?.phone && (
+                          <button
+                            onClick={() => handleSendWhatsapp(p)}
+                            disabled={sendingWhatsappId === p.id || !waReady}
+                            title={!waReady ? 'Template non ancora approvato da Meta o WhatsApp non configurato' : undefined}
+                            className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded font-medium cursor-pointer text-xs disabled:opacity-40 inline-flex items-center gap-1"
+                          >
+                            {sendingWhatsappId === p.id ? <Send size={12} className="animate-pulse" /> : <MessageCircle size={12} />}
+                            WhatsApp
                           </button>
                         )}
                       </td>

@@ -368,6 +368,32 @@ export interface SmtpSettings {
   fromEmail: string;
 }
 
+export interface WhatsappSettings {
+  enabled: boolean;
+  phoneNumberId: string;
+  wabaId: string;
+  hasAccessToken: boolean;
+  displayName: string;
+  apiVersion: string;
+  defaultCountryCode: string;
+}
+
+export type WhatsappTemplateStatus = 'NON_SINCRONIZZATO' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'ERRORE';
+
+export interface WhatsappTemplate {
+  id: number;
+  uuid?: string;
+  template_key: string;
+  display_name: string;
+  category: string;
+  language: string;
+  body_text: string;
+  meta_status: WhatsappTemplateStatus;
+  meta_rejection_reason?: string | null;
+  created_at: string;
+  updated_at?: string;
+}
+
 // --- BETA ENTERPRISE TYPES ---
 
 export interface BetaNasRouter {

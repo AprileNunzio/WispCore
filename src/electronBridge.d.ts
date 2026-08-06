@@ -27,6 +27,8 @@ import type {
   CommissionByCollaborator,
   EmailTemplate,
   SmtpSettings,
+  WhatsappSettings,
+  WhatsappTemplate,
   NetworkNode,
   BiMetrics,
   CsvImportResult,
@@ -105,6 +107,15 @@ export interface WispCoreBridge {
   };
   email: {
     sendPaymentReminder: (paymentId: number, templateId: number) => Promise<{ messageId: string }>;
+  };
+  whatsapp: {
+    getSettings: () => Promise<WhatsappSettings>;
+    setSettings: (settings: Partial<WhatsappSettings> & { accessToken?: string }) => Promise<WhatsappSettings>;
+    test: (settings?: Partial<WhatsappSettings> & { accessToken?: string }) => Promise<{ ok: boolean; error?: string; verifiedName?: string; displayPhoneNumber?: string; qualityRating?: string }>;
+    listTemplates: () => Promise<WhatsappTemplate[]>;
+    syncTemplates: () => Promise<WhatsappTemplate[]>;
+    refreshTemplatesStatus: () => Promise<WhatsappTemplate[]>;
+    sendPaymentReminder: (paymentId: number, templateKey: string) => Promise<{ messageId: string | null }>;
   };
   backup: {
     list: () => Promise<BackupInfo[]>;

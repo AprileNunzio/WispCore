@@ -6,6 +6,7 @@ import * as backup from '../services/backup.js';
 import * as mariadbSync from '../services/sync/mariadb.js';
 import * as syncScheduler from '../services/sync/scheduler.js';
 import * as email from '../services/email.js';
+import * as whatsapp from '../services/whatsapp.js';
 import * as updater from '../services/updater.js';
 import * as csv from '../services/csv.js';
 import * as report from '../services/report.js';
@@ -174,6 +175,62 @@ export function registerIpcHandlers(getWindow) {
     const html = email.renderTemplate(template.body, variables).replace(/\n/g, '<br/>');
     const result = await email.sendEmail({ to: client.email, subject, html });
     database.recordAudit(CURRENT_ACTOR(), 'EMAIL_SENT', 'payment', paymentId, { to: client.email });
+    database.persist();
+    return result;
+  });
+
+  // ---- WhatsApp Business (Meta Cloud API) ----
+  handle('whatsapp:getSettings', () => whatsapp.getWhatsappSettings());
+  handle('whatsapp:setSettings', (settings) => whatsapp.setWhatsappSettings(settings));
+  handle('whatsapp:test', (settings) => whatsapp.testWhatsappConnection(settings));
+  handle('whatsapp:listTemplates', () => database.listWhatsappTemplates());
+  // Crea/rileva i template sul WABA e salva l'esito reale restituito da Meta
+  // (PENDING/APPROVED/REJECTED), non uno stato locale ottimistico.
+  handle('whatsapp:syncTemplates', async () => {
+    const templates = database.listWhatsappTemplates();
+    const results = await whatsapp.syncTemplatesToMeta(templates);
+    for (const r of results) {
+      database.setWhatsappTemplateMetaStatus(r.templateKey, r, CURRENT_ACTOR());
+    }
+    return database.listWhatsappTemplates();
+  });
+  // Solo un refresh di stato, senza tentare di ricreare i template (utile per
+  // controllare se un template PENDING è nel frattempo diventato APPROVED).
+  handle('whatsapp:refreshTemplatesStatus', async () => {
+    const templates = database.listWhatsappTemplates();
+    const results = await whatsapp.refreshTemplatesStatus(templates);
+    for (const r of results) {
+      database.setWhatsappTemplateMetaStatus(r.templateKey, r, CURRENT_ACTOR());
+    }
+    return database.listWhatsappTemplates();
+  });
+  handle('whatsapp:sendPaymentReminder', async ({ paymentId, templateKey }) => {
+    const payments = database.listPayments();
+    const payment = payments.find((p) => p.id === paymentId);
+    if (!payment) throw new Error('Pagamento non trovato.');
+    const client = database.listClients().find((c) => c.id === payment.client_id);
+    if (!client?.phone) throw new Error('Il cliente non ha un numero di telefono registrato.');
+
+    const templates = database.listWhatsappTemplates();
+    const template = templates.find((t) => t.template_key === templateKey);
+    if (!template) throw new Error('Template WhatsApp non trovato.');
+    if (template.meta_status !== 'APPROVED') {
+      throw new Error(`Il template "${template.display_name}" non è ancora approvato da Meta (stato: ${template.meta_status}). Sincronizzalo nelle Impostazioni e attendi l'approvazione.`);
+    }
+
+    const paymentTypeLabel = {
+      RECURRING: 'Canone Ricorrente',
+      INSTALLATION: 'Costo Installazione',
+      EXTRA: 'Intervento Tecnico Extra',
+    }[payment.payment_type] || payment.payment_type;
+
+    const result = await whatsapp.sendTemplateMessage({
+      to: client.phone,
+      templateName: template.template_key,
+      languageCode: template.language,
+      params: [`${client.first_name} ${client.last_name}`, paymentTypeLabel, payment.amount.toFixed(2), payment.due_date],
+    });
+    database.recordAudit(CURRENT_ACTOR(), 'WHATSAPP_SENT', 'payment', paymentId, { to: client.phone, template: template.template_key });
     database.persist();
     return result;
   });
