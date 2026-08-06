@@ -1,17 +1,17 @@
 import { app, BrowserWindow, session } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { ensureDirectories, appendLog } from './services/paths.js';
+import { ensureDirectories } from './services/paths.js';
 import * as database from './services/database.js';
 import * as backup from './services/backup.js';
-import * as mariadbSync from './services/sync/mariadb.js';
+import * as syncScheduler from './services/sync/scheduler.js';
+import * as updater from './services/updater.js';
 import { registerIpcHandlers } from './ipc/handlers.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 let mainWindow = null;
-let autoSyncTimer = null;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -19,7 +19,14 @@ function createWindow() {
     height: 900,
     minWidth: 800,
     minHeight: 600,
-    fullscreen: true,
+    // Avviata massimizzata (occupa tutto lo schermo) ma NON in vero fullscreen:
+    // la finestra resta visibile con la barra del titolo e i pulsanti
+    // riduci a icona / ingrandisci / chiudi, come richiesto. `fullscreen: true`
+    // nasconderebbe quei controlli (comportamento kiosk), quindi si usa
+    // `show: false` + `.maximize()` su 'ready-to-show' per evitare il flash
+    // di una finestra piccola prima della massimizzazione.
+    show: false,
+    fullscreen: false,
     title: 'WispCore - Software Gestionale WISP (Alynet)',
     autoHideMenuBar: true,
     webPreferences: {
@@ -30,11 +37,10 @@ function createWindow() {
     },
   });
 
-  // L'app va sempre usata a schermo intero. Se l'utente esce dal fullscreen
-  // (es. Esc su alcuni sistemi) la massimizziamo comunque invece di lasciarla
-  // in una finestra piccola.
-  mainWindow.on('leave-full-screen', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.maximize();
+  mainWindow.once('ready-to-show', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.maximize();
+    mainWindow.show();
   });
 
   const devServerUrl = process.env.VITE_DEV_SERVER_URL || (!app.isPackaged ? 'http://localhost:5173' : null);
@@ -47,6 +53,13 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+}
+
+/** Inoltra un evento del ciclo di auto-update al renderer, se la finestra esiste ancora. */
+function sendUpdateEvent(payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('update:event', payload);
+  }
 }
 
 function applyContentSecurityPolicy() {
@@ -64,18 +77,15 @@ function applyContentSecurityPolicy() {
 
 function scheduleBackgroundJobs() {
   // Daily backup: checked once at startup, then every hour (cheap, idempotent
-  // check - it only actually copies the file once per calendar day).
+  // check - it only actually copies the file once per calendar day, and
+  // replicates on the secondary destination too when configured).
   backup.runDailyBackupIfNeeded();
   setInterval(() => backup.runDailyBackupIfNeeded(), 60 * 60 * 1000);
 
-  // Optional MariaDB auto-sync on the interval configured in Settings.
-  const settings = mariadbSync.getSyncSettings();
-  if (settings.enabled && settings.autoSyncMinutes > 0) {
-    if (autoSyncTimer) clearInterval(autoSyncTimer);
-    autoSyncTimer = setInterval(() => {
-      mariadbSync.runSync('auto-sync').catch((err) => appendLog(`Auto-sync fallita: ${err.message}`));
-    }, settings.autoSyncMinutes * 60 * 1000);
-  }
+  // Sync MariaDB multi-sede: quando attiva, sincronizza ad ogni modifica
+  // (event-driven, con un breve debounce) e comunque almeno ogni 1 minuto
+  // come fallback di sicurezza. Vedi services/sync/scheduler.js.
+  syncScheduler.initAutoSync(() => database.getAdmin()?.username || 'admin');
 }
 
 app.whenReady().then(async () => {
@@ -89,13 +99,22 @@ app.whenReady().then(async () => {
   createWindow();
   scheduleBackgroundJobs();
 
+  // Controllo aggiornamenti automatico all'avvio: cerca su GitHub Releases,
+  // scarica l'installer in background se trova una versione più recente e
+  // chiede all'utente (via renderer) se installarla non appena il download
+  // è completo. Fire-and-forget: non deve mai bloccare l'avvio dell'app né
+  // farla crashare se manca la connessione.
+  mainWindow.webContents.once('did-finish-load', () => {
+    updater.checkAndDownloadUpdateInBackground(sendUpdateEvent);
+  });
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
 
 app.on('window-all-closed', () => {
-  if (autoSyncTimer) clearInterval(autoSyncTimer);
+  syncScheduler.stopAutoSync();
   database.persist();
   if (process.platform !== 'darwin') app.quit();
 });

@@ -9,11 +9,13 @@ import type {
   PayoutStatus,
   AppPaths,
   BackupInfo,
+  SecondaryBackupSettings,
   LockoutState,
   SyncSettings,
   SyncSummary,
   AuditLogEntry,
   UpdateCheckResult,
+  UpdateEvent,
   Plan,
   MonthlyAnalyticsPoint,
   TopClient,
@@ -84,6 +86,9 @@ export interface WispCoreBridge {
     restore: (fileName: string) => Promise<boolean>;
     exportToFile: () => Promise<string | null>;
     importFromFile: () => Promise<boolean>;
+    getSecondarySettings: () => Promise<SecondaryBackupSettings>;
+    pickSecondaryDir: () => Promise<string | null>;
+    setSecondarySettings: (settings: { enabled: boolean; directory?: string | null }) => Promise<SecondaryBackupSettings>;
   };
   sync: {
     getSettings: () => Promise<SyncSettings>;
@@ -98,6 +103,9 @@ export interface WispCoreBridge {
   };
   update: {
     check: () => Promise<UpdateCheckResult>;
+    downloadNow: () => Promise<void>;
+    install: () => Promise<void>;
+    onEvent: (callback: (event: UpdateEvent) => void) => () => void;
   };
   migrate: {
     legacyLocalStorage: (payload: unknown) => Promise<{ migrated: boolean; clients?: number; collaborators?: number; reason?: string }>;

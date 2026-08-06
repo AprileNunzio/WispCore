@@ -1,11 +1,21 @@
 import fs from 'fs';
 import crypto from 'crypto';
+import { EventEmitter } from 'events';
 import initSqlJs from 'sql.js';
 import { ensureDirectories, appendLog } from './paths.js';
 import { encryptBuffer, decryptBuffer, encryptField, decryptField, getFieldKey } from './crypto.js';
+import { readConfig, updateConfig } from './config.js';
 
 let SQL = null;
 let db = null;
+
+/**
+ * Emette 'change' ad ogni scrittura che genera una riga in outbox (cioè ogni
+ * modifica sincronizzabile: clienti, collaboratori, pagamenti, provvigioni).
+ * Usato da sync/scheduler.js per innescare la sincronizzazione MariaDB subito
+ * dopo una modifica, invece di aspettare il prossimo giro dell'intervallo.
+ */
+export const dbEvents = new EventEmitter();
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT);
@@ -158,6 +168,113 @@ function runDefensiveMigrations() {
   }
 }
 
+// Placeholder disponibili nel motore di rendering (electron/services/email.js):
+// {{nome_cliente}}, {{importo}}, {{scadenza}}, {{tipo_pagamento}}.
+const DEFAULT_EMAIL_TEMPLATES = [
+  {
+    name: 'Promemoria Pagamento Canone',
+    subject: 'Promemoria: canone {{tipo_pagamento}} in scadenza il {{scadenza}}',
+    body: `Gentile {{nome_cliente}},
+
+con la presente Le ricordiamo cortesemente che il canone di servizio ({{tipo_pagamento}}) di importo pari a € {{importo}} risulta in scadenza il giorno {{scadenza}}.
+
+Per garantire la continuità operativa del collegamento e la stabilità della banda assegnata, La invitiamo a regolarizzare la posizione entro tale data.
+
+Per qualsiasi chiarimento relativo alla fatturazione o all'apparato installato presso la Sua sede, il nostro Ufficio Tecnico rimane a disposizione.
+
+Cordiali saluti,
+Il Team Tecnico WISP`,
+  },
+  {
+    name: 'Secondo Sollecito di Pagamento (Urgente)',
+    subject: 'Secondo sollecito: pagamento scaduto il {{scadenza}} - Azione richiesta',
+    body: `Gentile {{nome_cliente}},
+
+a seguito del nostro precedente promemoria, risulta che il pagamento di € {{importo}} relativo a {{tipo_pagamento}}, con scadenza il {{scadenza}}, non è ancora pervenuto ai nostri sistemi di fatturazione.
+
+La invitiamo a provvedere alla regolarizzazione entro 5 (cinque) giorni lavorativi, al fine di evitare l'applicazione delle procedure contrattuali previste per la morosità, incluso l'eventuale rallentamento del profilo di banda (traffic shaping) o la sospensione del servizio.
+
+Qualora il pagamento sia già stato effettuato, Le chiediamo di ignorare la presente comunicazione e di inviarci la relativa contabile.
+
+Cordiali saluti,
+Il Team Tecnico WISP`,
+  },
+  {
+    name: 'Preavviso di Sospensione Servizio',
+    subject: 'Preavviso di sospensione del servizio di connettività',
+    body: `Gentile {{nome_cliente}},
+
+Le comunichiamo che, a fronte del mancato pagamento del canone {{tipo_pagamento}} di € {{importo}}, scaduto il {{scadenza}}, il Suo collegamento è stato inserito in stato di preavviso tecnico.
+
+In assenza di regolarizzazione entro le prossime 48 (quarantotto) ore, il Network Operations Center (NOC) procederà, come da condizioni contrattuali, alla sospensione temporanea dell'erogazione del servizio sull'apparato CPE installato presso la Sua sede, fino al ripristino della posizione amministrativa.
+
+Per evitare l'interruzione, La invitiamo a contattare tempestivamente il nostro ufficio amministrativo.
+
+Cordiali saluti,
+Il Team Tecnico WISP`,
+  },
+  {
+    name: 'Conferma Attivazione Collegamento',
+    subject: 'Il Suo collegamento WISP è attivo - Benvenuto/a {{nome_cliente}}',
+    body: `Gentile {{nome_cliente}},
+
+confermiamo con la presente l'avvenuta attivazione del Suo collegamento in tecnologia wireless punto-multipunto. L'apparato CPE è stato installato, configurato e collaudato dal nostro tecnico, con verifica del livello di segnale e della saturazione del canale radio.
+
+Il canone concordato è pari a € {{importo}} ({{tipo_pagamento}}), con prima scadenza il {{scadenza}}.
+
+In caso di anomalie di connessione, cali di banda o necessità di assistenza tecnica sull'apparato, il nostro supporto è raggiungibile ai recapiti indicati nel contratto.
+
+Le auguriamo un buon utilizzo del servizio.
+
+Cordiali saluti,
+Il Team Tecnico WISP`,
+  },
+  {
+    name: 'Avviso Manutenzione Programmata Rete',
+    subject: 'Avviso di manutenzione programmata sulla rete - Possibili disservizi',
+    body: `Gentile {{nome_cliente}},
+
+La informiamo che è stata pianificata un'attività di manutenzione straordinaria sull'infrastruttura di rete (apparati di backhaul e/o stazioni radio base) che serve la Sua zona.
+
+Durante la finestra di manutenzione potrebbero verificarsi brevi microinterruzioni del servizio o fluttuazioni temporanee della banda disponibile, necessarie per il completamento in sicurezza degli interventi tecnici.
+
+Il nostro Network Operations Center monitorerà l'attività end-to-end per ripristinare la piena operatività nel minor tempo possibile.
+
+Ci scusiamo per il disagio e La ringraziamo per la comprensione.
+
+Cordiali saluti,
+Il Team Tecnico WISP`,
+  },
+];
+
+/**
+ * Crea un set di template email professionali (gergo tecnico WISP: CPE, NOC,
+ * banda, traffic shaping...) alla primissima esecuzione dell'app, così che
+ * l'operatore trovi già del materiale pronto all'uso nel modulo Email invece
+ * di una schermata vuota. Idempotente: il flag in config garantisce che non
+ * vengano ricreati se l'utente li cancella o modifica in seguito.
+ */
+function seedDefaultEmailTemplatesIfNeeded() {
+  const config = readConfig();
+  if (config.emailTemplatesSeeded) return;
+
+  const existing = get('SELECT COUNT(*) as n FROM email_templates')?.n || 0;
+  if (existing === 0) {
+    for (const t of DEFAULT_EMAIL_TEMPLATES) {
+      const rowUuid = uuid();
+      const ts = now();
+      run('INSERT INTO email_templates (uuid, name, subject, body, created_at, updated_at, deleted) VALUES (?, ?, ?, ?, ?, ?, 0)', [
+        rowUuid, t.name, t.subject, t.body, ts, ts,
+      ]);
+    }
+    appendLog(`Creati ${DEFAULT_EMAIL_TEMPLATES.length} template email di default.`);
+  }
+
+  updateConfig((c) => {
+    c.emailTemplatesSeeded = true;
+  });
+}
+
 function now() {
   return new Date().toISOString();
 }
@@ -185,6 +302,7 @@ export async function init() {
 
   db.run(SCHEMA);
   runDefensiveMigrations();
+  seedDefaultEmailTemplatesIfNeeded();
   persist();
   appendLog('Database inizializzato correttamente.');
   return db;
@@ -224,6 +342,7 @@ function recordOutbox(entity, rowUuid, op, payload) {
     JSON.stringify(payload),
     now(),
   ]);
+  dbEvents.emit('change', { entity, op });
 }
 
 export function recordAudit(actor, action, entity, entityId, details) {
@@ -705,12 +824,17 @@ export function getMonthlyAnalytics(months = 12) {
       "SELECT COALESCE(SUM(amount),0) as total FROM payments WHERE status='OVERDUE' AND due_date >= ? AND due_date < ? AND deleted=0",
       [monthStart, nextMonth]
     );
+    const commissionsRow = get(
+      "SELECT COALESCE(SUM(amount),0) as total FROM commissions WHERE created_at >= ? AND created_at < ? AND deleted=0",
+      [monthStart, nextMonth]
+    );
 
     series.push({
       month: monthStart,
       revenue: revenueRow?.total || 0,
       newClients: newClientsRow?.count || 0,
       overdue: overdueRow?.total || 0,
+      commissions: commissionsRow?.total || 0,
     });
   }
   return series;

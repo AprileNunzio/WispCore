@@ -15,7 +15,10 @@ import {
   ChevronDown,
   ChevronUp,
   Trophy,
-  Award
+  Award,
+  UserPlus,
+  ArrowUp,
+  ArrowDown
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, BarChart, Bar, CartesianGrid } from 'recharts';
 
@@ -24,8 +27,34 @@ interface Props {
 }
 
 type MetricKey = 'mrr' | 'revenue' | 'overdue' | 'commissions';
+type Period = 3 | 6 | 12 | 24 | 36;
+
+const PERIOD_OPTIONS: { value: Period; label: string }[] = [
+  { value: 3, label: '3m' },
+  { value: 6, label: '6m' },
+  { value: 12, label: '12m' },
+  { value: 24, label: '24m' },
+  { value: 36, label: '36m' },
+];
 
 const MONTH_LABELS = ['Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
+
+/** % di variazione tra due totali di periodo. null quando manca una base di confronto (periodo precedente a zero). */
+function pctChange(current: number, previous: number): number | null {
+  if (previous === 0) return current === 0 ? 0 : null;
+  return ((current - previous) / previous) * 100;
+}
+
+const DeltaBadge: React.FC<{ pct: number | null; goodWhenUp?: boolean }> = ({ pct, goodWhenUp = true }) => {
+  if (pct === null) return <span className="text-[11px] text-gray-400">vs periodo prec.: N/D</span>;
+  const isUp = pct >= 0;
+  const isGood = isUp === goodWhenUp;
+  return (
+    <span className={`inline-flex items-center gap-0.5 text-[11px] font-semibold ${isGood ? 'text-emerald-600' : 'text-rose-600'}`}>
+      {isUp ? <ArrowUp size={11} /> : <ArrowDown size={11} />} {Math.abs(pct).toFixed(1)}% vs periodo prec.
+    </span>
+  );
+};
 
 export const DashboardView: React.FC<Props> = ({ onNavigateToClients }) => {
   const [clients, setClients] = useState<Client[]>([]);
@@ -33,9 +62,10 @@ export const DashboardView: React.FC<Props> = ({ onNavigateToClients }) => {
   const [commissions, setCommissions] = useState<Commission[]>([]);
   const [quickSearch, setQuickSearch] = useState('');
   const [monthly, setMonthly] = useState<MonthlyAnalyticsPoint[]>([]);
+  const [previousMonthly, setPreviousMonthly] = useState<MonthlyAnalyticsPoint[]>([]);
   const [topClients, setTopClients] = useState<TopClient[]>([]);
   const [byCollaborator, setByCollaborator] = useState<CommissionByCollaborator[]>([]);
-  const [period, setPeriod] = useState<6 | 12 | 24>(12);
+  const [period, setPeriod] = useState<Period>(12);
   const [expandedMetric, setExpandedMetric] = useState<MetricKey | null>(null);
 
   useEffect(() => {
@@ -43,18 +73,22 @@ export const DashboardView: React.FC<Props> = ({ onNavigateToClients }) => {
   }, [period]);
 
   const loadData = async () => {
-    const [c, p, comm, m, top, byColl] = await Promise.all([
+    // Chiediamo il doppio del periodo selezionato: la seconda metà è il
+    // periodo corrente mostrato nei grafici, la prima metà serve solo come
+    // base di confronto per le variazioni % (badge "vs periodo precedente").
+    const [c, p, comm, fullSeries, top, byColl] = await Promise.all([
       dbService.getClients(),
       dbService.getPayments(),
       dbService.getCommissions(),
-      dbService.getMonthlyAnalytics(period),
+      dbService.getMonthlyAnalytics(period * 2),
       dbService.getTopClients(5),
       dbService.getCommissionsByCollaborator(),
     ]);
     setClients(c);
     setPayments(p);
     setCommissions(comm);
-    setMonthly(m);
+    setPreviousMonthly(fullSeries.slice(0, period));
+    setMonthly(fullSeries.slice(period));
     setTopClients(top);
     setByCollaborator(byColl);
   };
@@ -92,6 +126,27 @@ export const DashboardView: React.FC<Props> = ({ onNavigateToClients }) => {
   const growthPct = chartData.length >= 2 && chartData[0].revenue > 0
     ? (((chartData[chartData.length - 1].revenue - chartData[0].revenue) / chartData[0].revenue) * 100)
     : 0;
+
+  // Totali del periodo selezionato vs il periodo immediatamente precedente
+  // (stessa durata), per i badge "vs periodo precedente" sulle card in alto.
+  const periodTotals = useMemo(() => chartData.reduce((acc, m) => ({
+    revenue: acc.revenue + m.revenue,
+    newClients: acc.newClients + m.newClients,
+    overdue: acc.overdue + m.overdue,
+    commissions: acc.commissions + m.commissions,
+  }), { revenue: 0, newClients: 0, overdue: 0, commissions: 0 }), [chartData]);
+
+  const previousPeriodTotals = useMemo(() => previousMonthly.reduce((acc, m) => ({
+    revenue: acc.revenue + m.revenue,
+    newClients: acc.newClients + m.newClients,
+    overdue: acc.overdue + m.overdue,
+    commissions: acc.commissions + m.commissions,
+  }), { revenue: 0, newClients: 0, overdue: 0, commissions: 0 }), [previousMonthly]);
+
+  const revenueDeltaPct = pctChange(periodTotals.revenue, previousPeriodTotals.revenue);
+  const overdueDeltaPct = pctChange(periodTotals.overdue, previousPeriodTotals.overdue);
+  const commissionsDeltaPct = pctChange(periodTotals.commissions, previousPeriodTotals.commissions);
+  const newClientsDeltaPct = pctChange(periodTotals.newClients, previousPeriodTotals.newClients);
 
   const toggleMetric = (key: MetricKey) => setExpandedMetric((cur) => (cur === key ? null : key));
 
@@ -160,15 +215,17 @@ export const DashboardView: React.FC<Props> = ({ onNavigateToClients }) => {
       <div className="flex items-center gap-2 text-xs">
         <Terminal size={14} className="text-gray-400" />
         <span className="text-gray-400 font-mono">analytics --range</span>
-        {[6, 12, 24].map((p) => (
+        {PERIOD_OPTIONS.map((p) => (
           <button
-            key={p}
-            onClick={() => setPeriod(p as 6 | 12 | 24)}
-            className={`px-2.5 py-1 rounded-md font-mono cursor-pointer transition-colors ${period === p ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+            key={p.value}
+            onClick={() => setPeriod(p.value)}
+            className={`px-2.5 py-1 rounded-md font-mono cursor-pointer transition-colors ${period === p.value ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
           >
-            {p}m
+            {p.label}
           </button>
         ))}
+        <span className="text-gray-300">|</span>
+        <span className="text-gray-400">confronto automatico con i {period} mesi precedenti</span>
       </div>
 
       <div className="ultra-grid">
@@ -186,6 +243,9 @@ export const DashboardView: React.FC<Props> = ({ onNavigateToClients }) => {
             <span className="flex items-center gap-1"><Zap size={14} /> Base abbonamenti attiva</span>
             {expandedMetric === 'mrr' ? <ChevronUp size={14} className="text-gray-400" /> : <ChevronDown size={14} className="text-gray-400" />}
           </div>
+          <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-gray-400">
+            <UserPlus size={12} /> {periodTotals.newClients} nuovi clienti nel periodo <DeltaBadge pct={newClientsDeltaPct} />
+          </div>
         </div>
 
         <div onClick={() => toggleMetric('revenue')} className="glass-panel p-5 rounded-2xl border border-gray-200 hover:border-emerald-300 transition-all cursor-pointer">
@@ -202,6 +262,7 @@ export const DashboardView: React.FC<Props> = ({ onNavigateToClients }) => {
             <span>Canoni + Installazioni Una-Tantum</span>
             {expandedMetric === 'revenue' ? <ChevronUp size={14} className="text-gray-400" /> : <ChevronDown size={14} className="text-gray-400" />}
           </div>
+          <div className="mt-1.5"><DeltaBadge pct={revenueDeltaPct} /></div>
         </div>
 
         <div onClick={() => toggleMetric('overdue')} className="glass-panel p-5 rounded-2xl border border-gray-200 hover:border-rose-300 transition-all cursor-pointer">
@@ -218,6 +279,7 @@ export const DashboardView: React.FC<Props> = ({ onNavigateToClients }) => {
             <span>Totale in sospeso: € {pendingPayments.reduce((a,b)=>a+b.amount, 0).toFixed(2)}</span>
             {expandedMetric === 'overdue' ? <ChevronUp size={14} className="text-gray-400" /> : <ChevronDown size={14} className="text-gray-400" />}
           </div>
+          <div className="mt-1.5"><DeltaBadge pct={overdueDeltaPct} goodWhenUp={false} /></div>
         </div>
 
         <div onClick={() => toggleMetric('commissions')} className="glass-panel p-5 rounded-2xl border border-gray-200 hover:border-amber-300 transition-all cursor-pointer">
@@ -234,6 +296,7 @@ export const DashboardView: React.FC<Props> = ({ onNavigateToClients }) => {
             <span>Da liquidare ai collaboratori sul campo</span>
             {expandedMetric === 'commissions' ? <ChevronUp size={14} className="text-gray-400" /> : <ChevronDown size={14} className="text-gray-400" />}
           </div>
+          <div className="mt-1.5"><DeltaBadge pct={commissionsDeltaPct} /></div>
         </div>
       </div>
 
@@ -281,7 +344,7 @@ export const DashboardView: React.FC<Props> = ({ onNavigateToClients }) => {
                 <XAxis dataKey="label" stroke="#6b7280" fontSize={10} />
                 <YAxis stroke="#6b7280" fontSize={10} />
                 <Tooltip contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', fontSize: '11px' }} />
-                <Bar dataKey={expandedMetric === 'overdue' ? 'overdue' : expandedMetric === 'commissions' ? 'newClients' : 'revenue'} fill="#10b981" radius={[3, 3, 0, 0]} />
+                <Bar dataKey={expandedMetric === 'overdue' ? 'overdue' : expandedMetric === 'commissions' ? 'commissions' : 'revenue'} fill="#10b981" radius={[3, 3, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -375,6 +438,57 @@ export const DashboardView: React.FC<Props> = ({ onNavigateToClients }) => {
             <span>Gestisci Pagamenti & Clienti</span>
             <ArrowUpRight size={14} />
           </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 glass-panel rounded-2xl p-6 border border-gray-200">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="text-base font-bold text-gray-900 flex items-center gap-2"><UserPlus size={18} className="text-blue-600" /> Nuovi Clienti Acquisiti per Mese</h3>
+              <p className="text-gray-500 text-sm">Crescita della base clienti nel periodo selezionato ({period} mesi)</p>
+            </div>
+            <DeltaBadge pct={newClientsDeltaPct} />
+          </div>
+          <div className="h-[220px] w-full pt-2">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={chartData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                <XAxis dataKey="label" stroke="#9ca3af" fontSize={12} />
+                <YAxis stroke="#9ca3af" fontSize={12} allowDecimals={false} />
+                <Tooltip
+                  contentStyle={{ backgroundColor: '#ffffff', borderColor: '#e5e7eb', borderRadius: '0.75rem', color: '#111827', fontSize: '12px', boxShadow: '0 4px 20px rgba(0,0,0,0.08)' }}
+                />
+                <Bar dataKey="newClients" name="Nuovi Clienti" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        <div className="glass-panel rounded-2xl p-6 border border-gray-200 space-y-3">
+          <h3 className="text-base font-bold text-gray-900 flex items-center gap-2"><Activity size={18} className="text-cyan-600" /> Riepilogo Periodo ({period} mesi)</h3>
+          <div className="space-y-2.5 text-sm">
+            <div className="flex items-center justify-between p-2.5 bg-gray-50 rounded-lg border border-gray-200">
+              <span className="text-gray-500">Incasso periodo</span>
+              <span className="font-mono font-bold text-emerald-700">€ {periodTotals.revenue.toFixed(2)}</span>
+            </div>
+            <div className="flex items-center justify-between p-2.5 bg-gray-50 rounded-lg border border-gray-200">
+              <span className="text-gray-500">Media mensile</span>
+              <span className="font-mono font-bold text-gray-900">€ {avgMonthlyRevenue.toFixed(2)}</span>
+            </div>
+            <div className="flex items-center justify-between p-2.5 bg-gray-50 rounded-lg border border-gray-200">
+              <span className="text-gray-500">Nuovi clienti</span>
+              <span className="font-mono font-bold text-blue-700">{periodTotals.newClients}</span>
+            </div>
+            <div className="flex items-center justify-between p-2.5 bg-gray-50 rounded-lg border border-gray-200">
+              <span className="text-gray-500">Provvigioni generate</span>
+              <span className="font-mono font-bold text-cyan-700">€ {periodTotals.commissions.toFixed(2)}</span>
+            </div>
+            <div className="flex items-center justify-between p-2.5 bg-gray-50 rounded-lg border border-gray-200">
+              <span className="text-gray-500">Insoluti nel periodo</span>
+              <span className="font-mono font-bold text-rose-600">€ {periodTotals.overdue.toFixed(2)}</span>
+            </div>
+          </div>
         </div>
       </div>
 

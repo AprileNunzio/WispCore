@@ -16,8 +16,11 @@ import {
   Copy,
   Radio,
   MailCheck,
+  HardDrive,
+  FolderOpen,
+  AlertTriangle,
 } from 'lucide-react';
-import type { AppPaths, BackupInfo, SyncSettings, AuditLogEntry, UpdateCheckResult, SmtpSettings } from '../types';
+import type { AppPaths, BackupInfo, SecondaryBackupSettings, SyncSettings, AuditLogEntry, UpdateCheckResult, SmtpSettings } from '../types';
 
 export const SettingsView: React.FC = () => {
   const { notify } = useToast();
@@ -31,12 +34,19 @@ export const SettingsView: React.FC = () => {
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
+  const [isDownloadingUpdate, setIsDownloadingUpdate] = useState(false);
+  const [downloadPercent, setDownloadPercent] = useState<number | null>(null);
 
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [isRestoring, setIsRestoring] = useState<string | null>(null);
 
+  const [secondaryBackup, setSecondaryBackup] = useState<SecondaryBackupSettings | null>(null);
+  const [secondaryDirDraft, setSecondaryDirDraft] = useState<string | null>(null);
+  const [isPickingDir, setIsPickingDir] = useState(false);
+  const [isSavingSecondary, setIsSavingSecondary] = useState(false);
+
   const [sync, setSync] = useState<SyncSettings | null>(null);
-  const [syncForm, setSyncForm] = useState({ host: '', port: 3306, database: '', user: '', password: '', ssl: false, autoSyncMinutes: 0 });
+  const [syncForm, setSyncForm] = useState({ host: '', port: 3306, database: '', user: '', password: '', ssl: false, autoSyncMinutes: 1 });
   const [testingConnection, setTestingConnection] = useState(false);
   const [runningSync, setRunningSync] = useState(false);
   const [orgKeyInput, setOrgKeyInput] = useState('');
@@ -50,14 +60,39 @@ export const SettingsView: React.FC = () => {
     loadAll();
   }, []);
 
+  // L'auto-update in background parte già da solo all'avvio (electron/main.js);
+  // qui ascoltiamo gli stessi eventi solo per mostrare l'avanzamento quando
+  // l'utente lo avvia manualmente da questa schermata.
+  useEffect(() => {
+    const unsubscribe = dbService.onUpdateEvent((evt) => {
+      if (evt.type === 'progress') setDownloadPercent(evt.percent ?? null);
+    });
+    return unsubscribe;
+  }, []);
+
+  const handleDownloadUpdate = async () => {
+    setIsDownloadingUpdate(true);
+    setDownloadPercent(0);
+    try {
+      await dbService.downloadUpdateNow();
+      notify('Download completato. Se è disponibile un aggiornamento riceverai a breve la richiesta di installazione.', 'info');
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "Impossibile scaricare l'aggiornamento.", 'error');
+    } finally {
+      setIsDownloadingUpdate(false);
+      setDownloadPercent(null);
+    }
+  };
+
   const loadAll = async () => {
-    const [v, p, b, log, s, sm] = await Promise.all([
+    const [v, p, b, log, s, sm, secBackup] = await Promise.all([
       dbService.getAppVersion(),
       dbService.getAppPaths(),
       dbService.getBackupsList(),
       dbService.getAuditLog(15),
       dbService.getSyncSettings(),
       dbService.getSmtpSettings(),
+      dbService.getSecondaryBackupSettings(),
     ]);
     setAppVersion(v);
     setPaths(p);
@@ -67,6 +102,33 @@ export const SettingsView: React.FC = () => {
     setSyncForm({ host: s.host, port: s.port, database: s.database, user: s.user, password: '', ssl: s.ssl, autoSyncMinutes: s.autoSyncMinutes });
     setSmtp(sm);
     setSmtpForm({ host: sm.host, port: sm.port, secure: sm.secure, user: sm.user, password: '', fromName: sm.fromName, fromEmail: sm.fromEmail });
+    setSecondaryBackup(secBackup);
+    setSecondaryDirDraft(secBackup.directory);
+  };
+
+  const handlePickSecondaryDir = async () => {
+    setIsPickingDir(true);
+    try {
+      const dir = await dbService.pickSecondaryBackupDir();
+      if (dir) setSecondaryDirDraft(dir);
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Impossibile aprire il selettore di cartelle.', 'error');
+    } finally {
+      setIsPickingDir(false);
+    }
+  };
+
+  const handleSaveSecondaryBackup = async (enabled: boolean) => {
+    setIsSavingSecondary(true);
+    try {
+      const updated = await dbService.setSecondaryBackupSettings({ enabled, directory: secondaryDirDraft });
+      setSecondaryBackup(updated);
+      notify(enabled ? 'Backup secondario attivato.' : 'Backup secondario disattivato.', 'success');
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Errore nel salvataggio del backup secondario.', 'error');
+    } finally {
+      setIsSavingSecondary(false);
+    }
   };
 
   const handleSaveSmtpSettings = async (enabled: boolean) => {
@@ -273,6 +335,18 @@ export const SettingsView: React.FC = () => {
             <div className="p-3 rounded-xl border border-amber-200 bg-amber-50 text-amber-700 text-xs">{updateError}</div>
           )}
 
+          {isDownloadingUpdate && (
+            <div className="space-y-1.5">
+              <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden border border-gray-200">
+                <div
+                  className="h-full bg-gradient-to-r from-blue-600 to-cyan-600 transition-all"
+                  style={{ width: `${downloadPercent ?? 0}%` }}
+                />
+              </div>
+              <p className="text-[11px] text-gray-400 text-center">Download in corso in background{downloadPercent != null ? ` — ${downloadPercent}%` : '…'}</p>
+            </div>
+          )}
+
           <button
             onClick={handleCheckUpdate}
             disabled={isCheckingUpdate}
@@ -281,6 +355,20 @@ export const SettingsView: React.FC = () => {
             <RefreshCw size={16} className={isCheckingUpdate ? 'animate-spin' : ''} />
             <span>Verifica Aggiornamenti su GitHub</span>
           </button>
+
+          {updateResult && !updateResult.isLatest && (
+            <button
+              onClick={handleDownloadUpdate}
+              disabled={isDownloadingUpdate}
+              className="w-full bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white text-xs font-semibold py-3 rounded-xl shadow-lg border border-emerald-400/20 flex items-center justify-center gap-2 cursor-pointer transition-all disabled:opacity-50"
+            >
+              <Download size={16} />
+              <span>{isDownloadingUpdate ? 'Download in corso...' : `Scarica v${updateResult.latestVersion} in Background`}</span>
+            </button>
+          )}
+          <p className="text-[10px] text-gray-400 text-center leading-relaxed">
+            Ad ogni avvio WispCore verifica da solo la presenza di aggiornamenti e li scarica in background: al termine ti chiederà se installarli.
+          </p>
         </div>
 
         {/* --- Directory tree --- */}
@@ -393,6 +481,73 @@ export const SettingsView: React.FC = () => {
           </div>
         </div>
 
+        {/* --- Secondary backup (external directory / NAS) --- */}
+        <div className="glass-panel p-6 rounded-2xl border border-gray-200 space-y-4 lg:col-span-2">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-3">
+              <div className="p-3 bg-indigo-50 text-indigo-600 rounded-xl border border-indigo-200">
+                <HardDrive size={22} />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-gray-900">Backup Secondario (Cartella Esterna)</h3>
+                <p className="text-xs text-gray-500">Replica automatica su NAS, disco esterno o unità di rete aziendale, ad ogni backup</p>
+              </div>
+            </div>
+            {secondaryBackup?.enabled && (
+              <span className="text-[10px] px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full font-semibold flex items-center gap-1">
+                <CheckCircle2 size={11} /> Attivo
+              </span>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 text-xs items-end">
+            <div>
+              <label className="text-gray-500 block mb-1">Cartella di Destinazione</label>
+              <div className="w-full bg-gray-50 border border-gray-300 rounded-lg p-2.5 text-gray-700 font-mono truncate" title={secondaryDirDraft || undefined}>
+                {secondaryDirDraft || 'Nessuna cartella selezionata'}
+              </div>
+            </div>
+            <button
+              onClick={handlePickSecondaryDir}
+              disabled={isPickingDir}
+              className="flex items-center gap-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-200 text-xs font-semibold px-3 py-2.5 rounded-xl cursor-pointer transition-colors disabled:opacity-50 whitespace-nowrap"
+            >
+              <FolderOpen size={14} /> {isPickingDir ? 'Attendere...' : 'Scegli Cartella...'}
+            </button>
+          </div>
+
+          {secondaryBackup?.lastError && (
+            <div className="p-3 rounded-xl border border-rose-200 bg-rose-50 text-rose-700 text-xs flex items-center gap-2">
+              <AlertTriangle size={14} className="shrink-0" /> Ultimo tentativo fallito: {secondaryBackup.lastError}
+            </div>
+          )}
+
+          {secondaryBackup?.lastBackupAt && (
+            <p className="text-[11px] text-gray-400">Ultima replica riuscita: {new Date(secondaryBackup.lastBackupAt).toLocaleString('it-IT')}</p>
+          )}
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => handleSaveSecondaryBackup(false)}
+              disabled={isSavingSecondary}
+              className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold rounded-xl cursor-pointer disabled:opacity-50"
+            >
+              Salva senza Attivare
+            </button>
+            <button
+              onClick={() => handleSaveSecondaryBackup(true)}
+              disabled={isSavingSecondary || !secondaryDirDraft}
+              className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-xl cursor-pointer disabled:opacity-50"
+            >
+              Salva & Attiva Replica
+            </button>
+          </div>
+
+          <p className="text-[10px] text-gray-400 leading-relaxed">
+            Ogni volta che viene creato un backup (giornaliero automatico o manuale) viene copiato anche qui, con checksum SHA-256 e la stessa politica di retention (30 giorni + 12 mesi). Se la cartella non è raggiungibile (es. disco scollegato), il backup locale primario non viene comunque compromesso.
+          </p>
+        </div>
+
         {/* --- MariaDB multi-site sync --- */}
         <div className="glass-panel p-6 rounded-2xl border border-gray-200 space-y-4 lg:col-span-2">
           <div className="flex items-center gap-3">
@@ -401,7 +556,7 @@ export const SettingsView: React.FC = () => {
             </div>
             <div>
               <h3 className="text-base font-bold text-gray-900">Sincronizzazione Multi-Sede (MariaDB)</h3>
-              <p className="text-xs text-gray-500">Collega più postazioni/tecnici a un server centrale online</p>
+              <p className="text-xs text-gray-500">Collega più postazioni/tecnici a un server centrale online — sync automatica ad ogni modifica</p>
             </div>
             {sync?.enabled && (
               <span className="ml-auto text-[10px] px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full font-semibold flex items-center gap-1">
@@ -442,9 +597,9 @@ export const SettingsView: React.FC = () => {
                 className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-gray-900 font-mono" />
             </div>
             <div>
-              <label className="text-gray-500 block mb-1">Auto-sync ogni (minuti, 0=disattivato)</label>
-              <input type="number" value={syncForm.autoSyncMinutes}
-                onChange={(e) => setSyncForm({ ...syncForm, autoSyncMinutes: Number(e.target.value) || 0 })}
+              <label className="text-gray-500 block mb-1">Fallback di sicurezza ogni (minuti, min. 1)</label>
+              <input type="number" min={1} value={syncForm.autoSyncMinutes}
+                onChange={(e) => setSyncForm({ ...syncForm, autoSyncMinutes: Math.max(1, Number(e.target.value) || 1) })}
                 className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-gray-900 font-mono" />
             </div>
             <div className="sm:col-span-2 flex items-center gap-2">
@@ -452,6 +607,10 @@ export const SettingsView: React.FC = () => {
               <label htmlFor="ssl" className="text-gray-500">Connessione TLS/SSL</label>
             </div>
           </div>
+
+          <p className="text-[10px] text-gray-400 -mt-1">
+            Quando attiva, la sync parte automaticamente pochi secondi dopo ogni modifica (cliente, pagamento, provvigione...); l'intervallo qui sopra è solo un fallback di sicurezza nel caso non ci siano modifiche.
+          </p>
 
           <div className="flex flex-wrap gap-2">
             <button onClick={handleTestConnection} disabled={testingConnection}

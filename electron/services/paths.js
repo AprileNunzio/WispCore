@@ -46,6 +46,7 @@ export function getAppPaths() {
     logsDir: path.join(rootDir, 'logs'),
     logFile: path.join(rootDir, 'logs', 'app.log'),
     backupsDir: path.join(rootDir, 'backups'),
+    updatesDir: path.join(rootDir, 'updates'),
     oneDriveDetected: oneDrive,
   };
 
@@ -54,7 +55,7 @@ export function getAppPaths() {
 
 export function ensureDirectories() {
   const p = getAppPaths();
-  for (const dir of [p.rootDir, p.dbDir, p.configDir, p.logsDir, p.backupsDir]) {
+  for (const dir of [p.rootDir, p.dbDir, p.configDir, p.logsDir, p.backupsDir, p.updatesDir]) {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }

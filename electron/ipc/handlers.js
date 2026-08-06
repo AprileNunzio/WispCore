@@ -4,7 +4,9 @@ import * as database from '../services/database.js';
 import * as auth from '../services/auth.js';
 import * as backup from '../services/backup.js';
 import * as mariadbSync from '../services/sync/mariadb.js';
+import * as syncScheduler from '../services/sync/scheduler.js';
 import * as email from '../services/email.js';
+import * as updater from '../services/updater.js';
 
 const CURRENT_ACTOR = () => database.getAdmin()?.username || 'admin';
 
@@ -125,9 +127,19 @@ export function registerIpcHandlers(getWindow) {
   handle('backup:exportToFile', () => backup.exportToFile(getWindow()));
   handle('backup:importFromFile', () => backup.importFromFile(getWindow(), CURRENT_ACTOR()));
 
+  // ---- Backup secondario (cartella esterna, NAS, unità di rete...) ----
+  handle('backup:getSecondarySettings', () => backup.getSecondaryBackupSettings());
+  handle('backup:pickSecondaryDir', () => backup.pickSecondaryBackupDirectory(getWindow()));
+  handle('backup:setSecondarySettings', (settings) => backup.setSecondaryBackupSettings(settings));
+
   // ---- MariaDB multi-site sync ----
   handle('sync:getSettings', () => mariadbSync.getSyncSettings());
-  handle('sync:setSettings', (settings) => mariadbSync.setSyncSettings(settings));
+  handle('sync:setSettings', (settings) => {
+    const saved = mariadbSync.setSyncSettings(settings);
+    // Applica subito il nuovo intervallo/stato senza richiedere il riavvio dell'app.
+    syncScheduler.rescheduleAutoSync();
+    return saved;
+  });
   handle('sync:test', (settings) => mariadbSync.testConnection(settings));
   handle('sync:run', () => mariadbSync.runSync(CURRENT_ACTOR()));
   handle('sync:generateOrgKey', () => mariadbSync.generateAndStoreOrgKey());
@@ -137,24 +149,17 @@ export function registerIpcHandlers(getWindow) {
   handle('audit:list', (limit) => database.listAuditLog(limit));
 
   // ---- Auto-update (real GitHub Releases check, honestly reported) ----
-  handle('update:check', async () => {
-    const res = await fetch('https://api.github.com/repos/AprileNunzio/WispCore/releases/latest', {
-      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'WispCore-App' },
-    });
-    if (!res.ok) {
-      throw new Error(res.status === 404 ? 'Nessuna release pubblicata su GitHub.' : `GitHub API: ${res.status}`);
-    }
-    const json = await res.json();
-    const latestTag = (json.tag_name || '').replace(/^v/, '');
-    const current = app.getVersion();
-    return {
-      currentVersion: current,
-      latestVersion: latestTag || null,
-      isLatest: !latestTag || latestTag === current,
-      releaseUrl: json.html_url || null,
-      publishedAt: json.published_at || null,
-    };
-  });
+  const sendUpdateEvent = (payload) => {
+    const win = getWindow();
+    if (win && !win.isDestroyed()) win.webContents.send('update:event', payload);
+  };
+
+  handle('update:check', () => updater.checkForUpdate());
+  // Trigger manuale (es. bottone in Impostazioni): scarica in background
+  // esattamente come il controllo automatico all'avvio, riusando la stessa
+  // logica e gli stessi eventi verso il renderer.
+  handle('update:downloadNow', () => updater.checkAndDownloadUpdateInBackground(sendUpdateEvent));
+  handle('update:install', () => updater.installDownloadedUpdate());
 
   // ---- One-time migration from the old localStorage-only prototype ----
   // Called by the renderer right after a fresh Super Admin is created, only
