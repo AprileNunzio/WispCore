@@ -159,6 +159,10 @@ export interface WispCoreBridge {
       get: () => Promise<import('./types').BetaRadiusSettings>;
       save: (settings: import('./types').BetaRadiusSettings) => Promise<void>;
     };
+    cpeCredentials: {
+      get: () => Promise<import('./types').BetaCpeCredentials>;
+      save: (settings: import('./types').BetaCpeCredentials) => Promise<void>;
+    };
   };
   invoke: (channel: string, ...args: any[]) => Promise<any>;
 }

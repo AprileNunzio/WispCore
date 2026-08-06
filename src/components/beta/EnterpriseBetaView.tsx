@@ -1,14 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { dbService } from '../../dbService';
 import { useToast, useConfirm } from '../Toast';
-import { Network, Server, KeyRound, Wifi, Router, Activity, ShieldCheck, Database, Save, Plus, Trash2 } from 'lucide-react';
+import { Network, Server, KeyRound, Wifi, Activity, ShieldCheck, Database, Save, Plus, Trash2 } from 'lucide-react';
 import type { BetaNasRouter, BetaIpamSubnet, BetaRadiusSettings } from '../../types';
 
 export const EnterpriseBetaView: React.FC = () => {
   const { notify } = useToast();
   const confirmDialog = useConfirm();
   
-  const [activeTab, setActiveTab] = useState<'nms' | 'radius' | 'ipam'>('nms');
+  const [activeTab, setActiveTab] = useState<'nms' | 'radius' | 'ipam' | 'cpe'>('nms');
 
   // --- NMS State ---
   const [routers, setRouters] = useState<BetaNasRouter[]>([]);
@@ -24,6 +24,9 @@ export const EnterpriseBetaView: React.FC = () => {
   const [subnetForm, setSubnetForm] = useState<Partial<BetaIpamSubnet>>({});
   const [selectedSubnet, setSelectedSubnet] = useState<BetaIpamSubnet | null>(null);
 
+  // --- CPE Credentials State ---
+  const [cpeCredentials, setCpeCredentials] = useState<{username: string, password?: string}>({ username: 'admin', password: '' });
+
   useEffect(() => {
     loadData();
   }, [activeTab]);
@@ -36,9 +39,21 @@ export const EnterpriseBetaView: React.FC = () => {
         setRadiusSettings(await dbService.getBetaRadiusSettings());
       } else if (activeTab === 'ipam') {
         setSubnets(await dbService.getBetaIpamSubnets());
+      } else if (activeTab === 'cpe') {
+        setCpeCredentials(await dbService.getBetaCpeCredentials());
       }
     } catch (err) {
       notify(err instanceof Error ? err.message : 'Errore durante il caricamento dei dati beta.', 'error');
+    }
+  };
+
+  // --- CPE Actions ---
+  const handleSaveCpeCredentials = async () => {
+    try {
+      await dbService.saveBetaCpeCredentials(cpeCredentials);
+      notify('Credenziali CPE salvate (cifrate nel DB)', 'success');
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Errore salvataggio credenziali CPE', 'error');
     }
   };
 
@@ -136,17 +151,20 @@ export const EnterpriseBetaView: React.FC = () => {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-2 p-1 bg-gray-100 rounded-xl w-fit">
-        <button onClick={() => setActiveTab('nms')} className={`px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-all ${activeTab === 'nms' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
-          <Router size={16} /> Apparati (NMS)
-        </button>
-        <button onClick={() => setActiveTab('radius')} className={`px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-all ${activeTab === 'radius' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
-          <KeyRound size={16} /> RADIUS / AAA
-        </button>
-        <button onClick={() => setActiveTab('ipam')} className={`px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-all ${activeTab === 'ipam' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
-          <Network size={16} /> Gestione Subnet (IPAM)
-        </button>
-      </div>
+        <div className="flex bg-gray-100 p-1 rounded-xl w-max mb-6">
+          <button onClick={() => setActiveTab('nms')} className={`px-5 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors ${activeTab === 'nms' ? 'bg-white shadow text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}>
+            <Server size={16} /> NMS & NAS
+          </button>
+          <button onClick={() => setActiveTab('radius')} className={`px-5 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors ${activeTab === 'radius' ? 'bg-white shadow text-purple-600' : 'text-gray-500 hover:text-gray-800'}`}>
+            <ShieldCheck size={16} /> RADIUS
+          </button>
+          <button onClick={() => setActiveTab('ipam')} className={`px-5 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors ${activeTab === 'ipam' ? 'bg-white shadow text-emerald-600' : 'text-gray-500 hover:text-gray-800'}`}>
+            <Database size={16} /> IPAM
+          </button>
+          <button onClick={() => setActiveTab('cpe')} className={`px-5 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors ${activeTab === 'cpe' ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}>
+            <KeyRound size={16} /> CPE & Apparati
+          </button>
+        </div>
 
       {/* NMS TAB */}
       {activeTab === 'nms' && (
@@ -249,8 +267,38 @@ export const EnterpriseBetaView: React.FC = () => {
               </div>
             </label>
 
-            <button onClick={handleSaveRadius} className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 shadow-lg">
+            <button onClick={handleSaveRadius} className="mt-4 bg-purple-600 hover:bg-purple-700 text-white px-5 py-3 rounded-xl font-bold flex items-center gap-2 shadow-lg">
               <Save size={18} /> Salva Configurazione RADIUS
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* CPE TAB */}
+      {activeTab === 'cpe' && (
+        <div className="glass-panel bg-white p-6 rounded-2xl border border-gray-200 space-y-6 max-w-2xl">
+          <div className="flex items-center gap-3">
+            <div className="p-3 bg-blue-50 text-blue-600 rounded-xl"><KeyRound size={24} /></div>
+            <div>
+              <h3 className="text-lg font-bold text-gray-900">Accesso Rapido CPE</h3>
+              <p className="text-sm text-gray-500">Credenziali di default usate per l'accesso rapido all'interfaccia delle antenne dei clienti</p>
+            </div>
+          </div>
+
+          <div className="space-y-4 text-sm">
+            <div>
+              <label className="block text-gray-700 font-bold mb-1">Username Ubiquiti / Mikrotik</label>
+              <input type="text" value={cpeCredentials.username} onChange={e => setCpeCredentials({...cpeCredentials, username: e.target.value})} className="w-full p-3 bg-white border border-gray-300 rounded-xl" placeholder="admin" />
+            </div>
+
+            <div>
+              <label className="block text-gray-700 font-bold mb-1">Password Default</label>
+              <input type="password" value={cpeCredentials.password} onChange={e => setCpeCredentials({...cpeCredentials, password: e.target.value})} className="w-full p-3 bg-white border border-gray-300 rounded-xl font-mono" placeholder="Password di sistema..." />
+              <p className="text-xs text-gray-500 mt-1">Questa password verrà copiata in automatico negli appunti quando clicchi sull'indirizzo IP di un cliente.</p>
+            </div>
+
+            <button onClick={handleSaveCpeCredentials} className="mt-4 bg-blue-600 hover:bg-blue-700 text-white px-5 py-3 rounded-xl font-bold flex items-center gap-2 shadow-lg">
+              <Save size={18} /> Salva Credenziali CPE
             </button>
           </div>
         </div>

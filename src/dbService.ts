@@ -18,6 +18,7 @@ import type {
   BetaNasRouter,
   BetaIpamSubnet,
   BetaRadiusSettings,
+  BetaCpeCredentials,
 } from './types';
 
 /**
@@ -196,4 +197,7 @@ export const dbService = {
   
   getBetaRadiusSettings: (): Promise<BetaRadiusSettings> => bridge().beta.radiusSettings.get(),
   saveBetaRadiusSettings: (settings: BetaRadiusSettings): Promise<void> => bridge().beta.radiusSettings.save(settings),
+
+  getBetaCpeCredentials: (): Promise<BetaCpeCredentials> => bridge().beta.cpeCredentials.get(),
+  saveBetaCpeCredentials: (settings: BetaCpeCredentials): Promise<void> => bridge().beta.cpeCredentials.save(settings),
 };

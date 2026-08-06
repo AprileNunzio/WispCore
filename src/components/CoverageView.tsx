@@ -173,7 +173,18 @@ export const CoverageView: React.FC<Props> = ({ onNavigateToClients }) => {
               nodes.map((n) => (
                 <div key={n.id} className="p-3 bg-gray-50 rounded-xl border border-gray-200 space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="font-semibold text-gray-900 text-sm">{n.name}</span>
+                    <div>
+                      <span className="font-semibold text-gray-900 text-sm block">{n.name}</span>
+                      {n.ip_address && (
+                        <button onClick={() => {
+                          if (n.password) navigator.clipboard.writeText(n.password);
+                          window.wispcore.system.openExternal(`https://${n.ip_address}`);
+                          notify(`Aperto browser per ${n.ip_address}. Password copiata negli appunti!`, 'success');
+                        }} className="text-xs text-blue-600 hover:text-blue-800 font-mono mt-0.5 flex items-center gap-1 cursor-pointer" title="Apri interfaccia web">
+                          {n.ip_address} <span className="text-gray-400">({n.username || 'admin'})</span>
+                        </button>
+                      )}
+                    </div>
                     <div className="flex items-center gap-1">
                       <button onClick={() => handleEdit(n)} className="p-1.5 bg-white hover:bg-gray-100 text-blue-600 rounded-md border border-gray-200 cursor-pointer"><Edit3 size={12} /></button>
                       <button onClick={() => handleDelete(n)} className="p-1.5 bg-white hover:bg-gray-100 text-rose-600 rounded-md border border-gray-200 cursor-pointer"><Trash2 size={12} /></button>
@@ -211,6 +222,23 @@ export const CoverageView: React.FC<Props> = ({ onNavigateToClients }) => {
                 <label className="text-gray-500 block mb-1">Nome *</label>
                 <input type="text" required value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })}
                   placeholder="es. BTS Monte Alto" className="w-full bg-white border border-gray-300 rounded-xl p-2.5 text-gray-900" />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div>
+                  <label className="text-gray-500 block mb-1">Indirizzo IP</label>
+                  <input type="text" value={form.ip_address || ''} onChange={(e) => setForm({ ...form, ip_address: e.target.value })}
+                    className="w-full bg-white border border-gray-300 rounded-xl p-2.5 text-gray-900 font-mono" placeholder="10.x.x.x" />
+                </div>
+                <div>
+                  <label className="text-gray-500 block mb-1">Utente</label>
+                  <input type="text" value={form.username || ''} onChange={(e) => setForm({ ...form, username: e.target.value })}
+                    className="w-full bg-white border border-gray-300 rounded-xl p-2.5 text-gray-900" placeholder="admin" />
+                </div>
+                <div>
+                  <label className="text-gray-500 block mb-1">Password</label>
+                  <input type="password" value={form.password || ''} onChange={(e) => setForm({ ...form, password: e.target.value })}
+                    className="w-full bg-white border border-gray-300 rounded-xl p-2.5 text-gray-900 font-mono" placeholder={form.hasPassword ? '********' : ''} />
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>

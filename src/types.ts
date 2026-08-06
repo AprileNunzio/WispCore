@@ -90,6 +90,10 @@ export interface NetworkNode {
   id: number;
   uuid?: string;
   name: string;
+  ip_address?: string | null;
+  username?: string | null;
+  password?: string | null;
+  hasPassword?: boolean;
   latitude?: number | null;
   longitude?: number | null;
   max_clients?: number | null;
@@ -398,5 +402,11 @@ export interface BetaRadiusSettings {
   secret: string;
   coa_port: number;
   disconnect_on_overdue: boolean;
+}
+
+export interface BetaCpeCredentials {
+  username: string;
+  password?: string;
+  hasPassword?: boolean;
 }
 

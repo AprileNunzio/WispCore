@@ -145,6 +145,10 @@ contextBridge.exposeInMainWorld('wispcore', {
       get: () => invoke('beta:radiusSettings:get'),
       save: (settings) => invoke('beta:radiusSettings:save', settings),
     },
+    cpeCredentials: {
+      get: () => invoke('beta:cpeCredentials:get'),
+      save: (settings) => invoke('beta:cpeCredentials:save', settings),
+    }
   },
   invoke: (channel, ...args) => invoke(channel, ...args)
 });

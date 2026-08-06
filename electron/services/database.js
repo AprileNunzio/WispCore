@@ -278,6 +278,18 @@ function runDefensiveMigrations() {
   if (!clientColumns.includes('latitude')) {
     run('ALTER TABLE clients ADD COLUMN latitude REAL');
   }
+
+  // Network Nodes updates
+  const nodeColumns = all("PRAGMA table_info(network_nodes)").map((c) => c.name);
+  if (!nodeColumns.includes('ip_address')) {
+    run('ALTER TABLE network_nodes ADD COLUMN ip_address TEXT');
+  }
+  if (!nodeColumns.includes('username')) {
+    run('ALTER TABLE network_nodes ADD COLUMN username TEXT');
+  }
+  if (!nodeColumns.includes('password')) {
+    run('ALTER TABLE network_nodes ADD COLUMN password TEXT');
+  }
   if (!clientColumns.includes('longitude')) {
     run('ALTER TABLE clients ADD COLUMN longitude REAL');
   }
@@ -1255,7 +1267,8 @@ export function deletePlan(id, actor) {
 
 function mapNetworkNode(row) {
   if (!row) return row;
-  return { ...row, active: !!row.active };
+  const pw = row.password ? decryptField(row.password) : null;
+  return { ...row, active: !!row.active, password: pw, hasPassword: !!pw };
 }
 
 export function listNetworkNodes() {
@@ -1274,9 +1287,12 @@ export function listNetworkNodes() {
 export function saveNetworkNode(data, actor) {
   if (data.id) {
     run(
-      `UPDATE network_nodes SET name=?, latitude=?, longitude=?, max_clients=?, notes=?, active=?, updated_at=? WHERE id=?`,
+      `UPDATE network_nodes SET name=?, ip_address=?, username=?, password=?, latitude=?, longitude=?, max_clients=?, notes=?, active=?, updated_at=? WHERE id=?`,
       [
         data.name,
+        data.ip_address || null,
+        data.username || null,
+        data.password ? encryptField(data.password) : null,
         data.latitude === '' || data.latitude === undefined ? null : Number(data.latitude),
         data.longitude === '' || data.longitude === undefined ? null : Number(data.longitude),
         data.max_clients || null,
@@ -1295,11 +1311,14 @@ export function saveNetworkNode(data, actor) {
   const rowUuid = uuid();
   const ts = now();
   run(
-    `INSERT INTO network_nodes (uuid, name, latitude, longitude, max_clients, notes, active, created_at, updated_at, deleted)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+    `INSERT INTO network_nodes (uuid, name, ip_address, username, password, latitude, longitude, max_clients, notes, active, created_at, updated_at, deleted)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
     [
       rowUuid,
       data.name,
+      data.ip_address || null,
+      data.username || null,
+      data.password ? encryptField(data.password) : null,
       data.latitude === '' || data.latitude === undefined ? null : Number(data.latitude),
       data.longitude === '' || data.longitude === undefined ? null : Number(data.longitude),
       data.max_clients || null,
@@ -1840,5 +1859,27 @@ export function saveBetaRadiusSettings(settings, actor) {
   recordAudit(actor, 'UPDATE', 'beta_radius_settings', null, null);
   persist();
   return settings;
+}
+
+export function getBetaCpeCredentials() {
+  const row = get('SELECT value FROM schema_meta WHERE key = ?', ['beta_cpe_credentials']);
+  if (!row) return { username: 'admin', password: '', hasPassword: false };
+  const data = JSON.parse(row.value);
+  const pw = data.password ? decryptField(data.password) : null;
+  return { username: data.username || 'admin', password: pw, hasPassword: !!pw };
+}
+
+export function saveBetaCpeCredentials(settings, actor) {
+  const toSave = {
+    username: settings.username || 'admin',
+    password: settings.password ? encryptField(settings.password) : null,
+  };
+  run(
+    'INSERT INTO schema_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+    ['beta_cpe_credentials', JSON.stringify(toSave)]
+  );
+  recordAudit(actor, 'UPDATE', 'beta_cpe_credentials', null, null);
+  persist();
+  return getBetaCpeCredentials();
 }
 

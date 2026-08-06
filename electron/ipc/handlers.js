@@ -222,7 +222,9 @@ export function registerIpcHandlers(getWindow) {
   
   handle('beta:radiusSettings:get', () => database.getBetaRadiusSettings());
   handle('beta:radiusSettings:save', (settings) => database.saveBetaRadiusSettings(settings, CURRENT_ACTOR()));
-
+  
+  handle('beta:cpeCredentials:get', () => database.getBetaCpeCredentials());
+  handle('beta:cpeCredentials:save', (settings) => database.saveBetaCpeCredentials(settings, CURRENT_ACTOR()));
 
   // ---- Auto-update (real GitHub Releases check, honestly reported) ----
   const sendUpdateEvent = (payload) => {

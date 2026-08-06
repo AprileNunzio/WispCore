@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { dbService } from '../dbService';
+import { useToast } from './Toast';
 import type { ClientDetail, ClientStatus } from '../types';
 import {
   X,
@@ -42,6 +43,7 @@ interface Props {
 export const ClientDetailModal: React.FC<Props> = ({ clientId, onClose }) => {
   const [detail, setDetail] = useState<ClientDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const { notify } = useToast();
 
   useEffect(() => {
     setLoading(true);
@@ -50,6 +52,19 @@ export const ClientDetailModal: React.FC<Props> = ({ clientId, onClose }) => {
       setLoading(false);
     });
   }, [clientId]);
+
+  const handleOpenCpe = async (ip: string) => {
+    try {
+      const creds = await dbService.getBetaCpeCredentials();
+      if (creds.password) {
+        navigator.clipboard.writeText(creds.password);
+      }
+      window.wispcore.system.openExternal(`https://${ip}`);
+      notify(`Browser aperto per ${ip}. Password '${creds.username}' copiata negli appunti!`, 'success');
+    } catch (e) {
+      notify('Impossibile recuperare credenziali CPE', 'error');
+    }
+  };
 
   // Calcoli Portafoglio & Estratto Conto Cliente
   const totalPaid = detail ? detail.payments.filter(p => p.status === 'PAID').reduce((acc, p) => acc + p.amount, 0) : 0;
@@ -147,7 +162,13 @@ export const ClientDetailModal: React.FC<Props> = ({ clientId, onClose }) => {
 
               <div className="p-3.5 bg-gray-50 rounded-xl border border-gray-200">
                 <div className="text-[11px] text-gray-400 uppercase flex items-center gap-1 mb-1 font-semibold"><Network size={13} className="text-blue-600" /> Indirizzo IP Assegnato</div>
-                <div className="text-blue-700 font-mono font-bold">{detail.client.assigned_ip || 'Non assegnato'}</div>
+                {detail.client.assigned_ip ? (
+                  <button onClick={() => handleOpenCpe(detail.client.assigned_ip!)} className="text-blue-700 hover:text-blue-900 font-mono font-bold cursor-pointer transition-colors" title="Apri interfaccia web">
+                    {detail.client.assigned_ip}
+                  </button>
+                ) : (
+                  <div className="text-blue-700 font-mono font-bold">Non assegnato</div>
+                )}
               </div>
 
               <div className="p-3.5 bg-gray-50 rounded-xl border border-gray-200">
