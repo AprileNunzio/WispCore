@@ -176,3 +176,22 @@ export function calculateNextDueDate(previousDueDate, billingCycle = 'MONTHLY') 
   const months = BILLING_CYCLE_MONTHS[billingCycle] || 1;
   return addMonthsToDateString(baseDate, months);
 }
+
+/**
+ * Calcola l'Incasso Lordo, le Provvigioni Spettanti e l'Incasso Netto Azienda (Margine WISP).
+ */
+export function calculateNetWispMetrics(payments = [], commissions = []) {
+  const grossRevenue = payments.filter(p => !p.deleted && p.status === 'PAID').reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+  const totalCommissionsEarned = commissions.filter(c => !c.deleted).reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
+  const pendingCommissions = commissions.filter(c => !c.deleted && c.payout_status === 'PENDING').reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
+  const paidCommissions = commissions.filter(c => !c.deleted && c.payout_status === 'PAID').reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
+  const netWispRevenue = Math.max(0, grossRevenue - totalCommissionsEarned);
+
+  return {
+    grossRevenue,
+    totalCommissionsEarned,
+    pendingCommissions,
+    paidCommissions,
+    netWispRevenue,
+  };
+}

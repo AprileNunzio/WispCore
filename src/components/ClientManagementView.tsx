@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { dbService } from '../dbService';
 import { useToast, useConfirm } from './Toast';
 import { ClientDetailModal } from './ClientDetailModal';
-import type { Client, ClientStatus, Collaborator, NetworkNode, Plan, BillingCycle } from '../types';
+import { ClientFormModal } from './ClientFormModal';
+import type { Client, ClientStatus, Collaborator, NetworkNode, Plan, ClientSavePayload } from '../types';
 import { BILLING_CYCLE_INFO } from '../types';
 import {
   Users,
@@ -12,9 +13,7 @@ import {
   Network,
   Trash2,
   Edit3,
-  X,
   Radio,
-  DollarSign,
   FileText,
   UserCheck,
   Eye,
@@ -25,7 +24,6 @@ import {
   MessageCircle,
   MapPin,
   Paperclip,
-  FileSignature,
   Table2,
   Upload,
   Filter
@@ -49,26 +47,8 @@ const STATUS_BADGE: Record<ClientStatus, string> = {
   PROSPECT: 'bg-blue-50 text-blue-700 border-blue-200',
 };
 
-/** Numero di telefono ripulito in formato E.164-ish per il link WhatsApp (wa.me vuole solo cifre, senza +/spazi/trattini). */
 function phoneDigitsForWhatsApp(phone: string): string {
   return phone.replace(/[^\d]/g, '');
-}
-
-/** Somma un numero di mesi a una data "YYYY-MM-DD", usata per proporre la prossima scadenza in base al ciclo di fatturazione. */
-/**
- * Somma mesi a una data "YYYY-MM-DD" con pura aritmetica su anno/mese/giorno
- * (stessa logica di electron/services/database.js): nessun oggetto Date
- * coinvolto nel calcolo del giorno, quindi nessuna dipendenza dal fuso
- * orario. Clampa il giorno all'ultimo valido del mese di destinazione.
- */
-function addMonthsToDateStr(dateStr: string, months: number): string {
-  const [y, m, d] = dateStr.split('-').map(Number);
-  const totalMonths = y * 12 + (m - 1) + months;
-  const newYear = Math.floor(totalMonths / 12);
-  const newMonth = totalMonths % 12;
-  const daysInNewMonth = new Date(newYear, newMonth + 1, 0).getDate();
-  const newDay = Math.min(d, daysInNewMonth);
-  return `${newYear}-${String(newMonth + 1).padStart(2, '0')}-${String(newDay).padStart(2, '0')}`;
 }
 
 export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' }) => {
@@ -85,9 +65,7 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
   const [showModal, setShowModal] = useState(false);
   const [editingClient, setEditingClient] = useState<Partial<Client> | null>(null);
   const [visiblePasswordIds, setVisiblePasswordIds] = useState<Set<number>>(new Set());
-  const [formPasswordVisible, setFormPasswordVisible] = useState(false);
   const [detailClientId, setDetailClientId] = useState<number | null>(null);
-  const [isAttachingDoc, setIsAttachingDoc] = useState(false);
   const [isExportingCsv, setIsExportingCsv] = useState(false);
   const [isImportingCsv, setIsImportingCsv] = useState(false);
 
@@ -125,7 +103,7 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
     try {
       const result = await dbService.importClientsCsv();
       if (result) {
-        notify(`Importati ${result.imported} di ${result.total} clienti${result.errors.length ? ` (${result.errors.length} righe con errori)` : ''}.`, result.errors.length ? 'info' : 'success');
+        notify(`Importati ${result.imported} di ${result.total} clienti.`, 'success');
         loadData();
       }
     } catch (err) {
@@ -146,22 +124,6 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
       .catch(() => notify('Impossibile aprire Google Maps.', 'error'));
   };
 
-  const handleAttachDocument = async (clientId: number) => {
-    setIsAttachingDoc(true);
-    try {
-      const path = await dbService.attachContractDocument(clientId);
-      if (path) {
-        notify('Documento di contratto allegato.', 'success');
-        loadData();
-        setEditingClient((prev) => (prev ? { ...prev, contract_document_path: path } : prev));
-      }
-    } catch (err) {
-      notify(err instanceof Error ? err.message : "Errore nell'allegare il documento.", 'error');
-    } finally {
-      setIsAttachingDoc(false);
-    }
-  };
-
   const handleOpenDocument = async (clientId: number) => {
     try {
       await dbService.openContractDocument(clientId);
@@ -178,108 +140,61 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
     });
   };
 
+  const handleSavePayload = async (payload: ClientSavePayload) => {
+    await dbService.saveClient(payload);
+    notify(payload.id ? 'Cliente aggiornato con successo.' : 'Nuova attivazione cliente completata!', 'success');
+    setShowModal(false);
+    loadData();
+  };
+
   const handleOpenNewModal = () => {
-    setEditingClient({
-      first_name: '',
-      last_name: '',
-      tax_code: '',
-      address: '',
-      phone: '',
-      email: '',
-      status: 'ACTIVE',
-      billing_cycle: 'MONTHLY',
-      monthly_fee: 29.90,
-      installation_fee: 100.00,
-      collaborator_commission_fee: 0,
-      contract_start_date: '',
-      contract_end_date: '',
-      contract_notes: '',
-      pppoe_username: '',
-      pppoe_password: '',
-      mac_address: '',
-      assigned_ip: '',
-      device_model: 'Ubiquiti LiteBeam 5AC',
-      notes: ''
-    });
-    setFormPasswordVisible(false);
+    setEditingClient(null);
     setShowModal(true);
   };
 
   const handleEdit = (client: Client) => {
     setEditingClient(client);
-    setFormPasswordVisible(false);
     setShowModal(true);
   };
 
   const handleDelete = async (id: number) => {
-    const confirmed = await confirmDialog('Sei sicuro di voler eliminare questo cliente? Tutti i relativi dati tecnici e pagamenti verranno cancellati.');
-    if (!confirmed) return;
-    await dbService.deleteClient(id);
-    notify('Cliente eliminato.', 'success');
-    loadData();
-  };
-
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingClient?.first_name || !editingClient?.last_name) return;
-
-    await dbService.saveClient(editingClient);
-    notify(editingClient.id ? 'Cliente aggiornato con successo.' : 'Nuovo cliente WISP attivato.', 'success');
-    setShowModal(false);
-    setEditingClient(null);
-    loadData();
-  };
-
-  const handleSelectPlan = (planId: number | null) => {
-    if (!editingClient) return;
-    const plan = plans.find((p) => p.id === planId);
-    setEditingClient({
-      ...editingClient,
-      plan_id: planId,
-      ...(plan ? { monthly_fee: plan.monthly_fee, installation_fee: plan.installation_fee } : {}),
-    });
-  };
-
-  const handleSelectCollaborator = (collabId: number | null) => {
-    if (!editingClient) return;
-    const collab = collaborators.find(c => c.id === collabId);
-    setEditingClient({
-      ...editingClient,
-      collaborator_id: collabId,
-      collaborator_commission_fee: editingClient.collaborator_commission_fee || collab?.default_commission_fee || 0,
-      collaborator_installation_commission: editingClient.collaborator_installation_commission || collab?.default_installation_commission || 0,
-    });
+    const ok = await confirmDialog('Sei sicuro di voler eliminare questo cliente? Le informazioni storiche rimarranno conservate.');
+    if (ok) {
+      await dbService.deleteClient(id);
+      notify('Cliente eliminato.', 'success');
+      loadData();
+    }
   };
 
   const filteredClients = clients.filter(c => {
-    if (statusFilter !== 'ALL' && c.status !== statusFilter) return false;
-    if (planFilter !== 'ALL' && c.plan_id !== planFilter) return false;
-    if (collaboratorFilter !== 'ALL' && c.collaborator_id !== collaboratorFilter) return false;
+    const matchesSearch =
+      !search.trim() ||
+      c.first_name.toLowerCase().includes(search.toLowerCase()) ||
+      c.last_name.toLowerCase().includes(search.toLowerCase()) ||
+      (c.assigned_ip && c.assigned_ip.includes(search)) ||
+      (c.mac_address && c.mac_address.toLowerCase().includes(search.toLowerCase())) ||
+      (c.pppoe_username && c.pppoe_username.toLowerCase().includes(search.toLowerCase()));
 
-    const query = search.toLowerCase().trim();
-    if (!query) return true;
-    return (
-      c.first_name.toLowerCase().includes(query) ||
-      c.last_name.toLowerCase().includes(query) ||
-      (c.assigned_ip && c.assigned_ip.includes(query)) ||
-      (c.mac_address && c.mac_address.toLowerCase().includes(query)) ||
-      (c.pppoe_username && c.pppoe_username.toLowerCase().includes(query)) ||
-      (c.tax_code && c.tax_code.toLowerCase().includes(query))
-    );
+    const matchesStatus = statusFilter === 'ALL' || c.status === statusFilter;
+    const matchesPlan = planFilter === 'ALL' || c.plan_id === planFilter;
+    const matchesCollab = collaboratorFilter === 'ALL' || c.collaborator_id === collaboratorFilter;
+
+    return matchesSearch && matchesStatus && matchesPlan && matchesCollab;
   });
 
   return (
     <div className="space-y-6 pb-12">
+      {/* Top Bar Widescreen */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white/80 glass-panel rounded-2xl p-6 border border-gray-200">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 tracking-tight flex items-center gap-2">
             <Users className="text-blue-600" size={24} />
-            <span>Gestione Anagrafica</span>
+            <span>Gestione Anagrafica & Attivazioni Clienti WISP</span>
           </h1>
-          <p className="text-gray-500 text-sm mt-1">Configurazione PPPoE, indirizzi IP, MAC Address e contratti di fatturazione</p>
+          <p className="text-gray-500 text-sm mt-1">Gestione completa utenti rete, contratti, parametri PPPoE, IP e provvigioni</p>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2.5">
           <button
             onClick={handleExportCsv}
             disabled={isExportingCsv}
@@ -288,6 +203,7 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
           >
             <Table2 size={15} /> <span className="hidden lg:inline">Esporta CSV</span>
           </button>
+
           <button
             onClick={handleImportCsv}
             disabled={isImportingCsv}
@@ -296,6 +212,7 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
           >
             <Upload size={15} /> <span className="hidden lg:inline">Importa CSV</span>
           </button>
+
           <button
             onClick={handleOpenNewModal}
             className="bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white text-sm font-semibold px-4 py-3 rounded-xl shadow-lg shadow-blue-600/20 border border-blue-400/20 flex items-center justify-center gap-2 cursor-pointer transition-all"
@@ -306,6 +223,7 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
         </div>
       </div>
 
+      {/* Barre di Filtro */}
       <div className="glass-panel rounded-2xl p-4 border border-gray-200 flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[220px]">
           <Search className="absolute left-3.5 top-3 text-gray-400" size={18} />
@@ -335,6 +253,7 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
         </select>
       </div>
 
+      {/* Lista Schede Clienti */}
       <div className="grid grid-cols-1 gap-4">
         {filteredClients.length === 0 ? (
           <div className="glass-panel rounded-2xl p-12 text-center text-gray-400 text-sm">
@@ -505,379 +424,15 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
         <ClientDetailModal clientId={detailClientId} onClose={() => setDetailClientId(null)} />
       )}
 
-      {showModal && editingClient && (
-        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-6xl glass-panel-glow bg-white rounded-3xl p-6 border border-gray-200 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-6 pb-3 border-b border-gray-200">
-              <h2 className="text-lg font-bold text-gray-900">
-                {editingClient.id ? 'Modifica Scheda Cliente WISP' : 'Nuova Attivazione Cliente WISP'}
-              </h2>
-              <button onClick={() => setShowModal(false)} className="text-gray-400 hover:text-gray-700 cursor-pointer">
-                <X size={20} />
-              </button>
-            </div>
-
-            <form onSubmit={handleSave} className="space-y-4 text-sm">
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <div className="bg-gray-50 p-4 rounded-2xl border border-gray-200 space-y-3">
-                <h4 className="text-xs font-semibold text-blue-700 uppercase tracking-wider">Dati Anagrafici & Contatto</h4>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-gray-500 mb-1 block">Nome *</label>
-                    <input
-                      type="text"
-                      required
-                      value={editingClient.first_name || ''}
-                      onChange={(e) => setEditingClient({ ...editingClient, first_name: e.target.value })}
-                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-gray-900"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-gray-500 mb-1 block">Cognome / Ragione Sociale *</label>
-                    <input
-                      type="text"
-                      required
-                      value={editingClient.last_name || ''}
-                      onChange={(e) => setEditingClient({ ...editingClient, last_name: e.target.value })}
-                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-gray-900"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-gray-500 mb-1 block">Codice Fiscale / P.IVA</label>
-                    <input
-                      type="text"
-                      value={editingClient.tax_code || ''}
-                      onChange={(e) => setEditingClient({ ...editingClient, tax_code: e.target.value })}
-                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-gray-900 uppercase font-mono"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-gray-500 mb-1 block">Indirizzo di Installazione</label>
-                    <input
-                      type="text"
-                      value={editingClient.address || ''}
-                      onChange={(e) => setEditingClient({ ...editingClient, address: e.target.value })}
-                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-gray-900"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-gray-500 mb-1 block">Telefono</label>
-                    <input
-                      type="text"
-                      value={editingClient.phone || ''}
-                      onChange={(e) => setEditingClient({ ...editingClient, phone: e.target.value })}
-                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-gray-900"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-gray-500 mb-1 block">Email</label>
-                    <input
-                      type="email"
-                      value={editingClient.email || ''}
-                      onChange={(e) => setEditingClient({ ...editingClient, email: e.target.value })}
-                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-gray-900"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="bg-gray-50 p-4 rounded-2xl border border-gray-200 space-y-3">
-                <h4 className="text-xs font-semibold text-cyan-700 uppercase tracking-wider flex items-center gap-1">
-                  <Wifi size={14} /> Dettagli Tecnici WISP & Rete
-                </h4>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-gray-500 mb-1 block font-mono">PPPoE Username</label>
-                    <input
-                      type="text"
-                      value={editingClient.pppoe_username || ''}
-                      onChange={(e) => setEditingClient({ ...editingClient, pppoe_username: e.target.value })}
-                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-cyan-700 font-mono"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-gray-500 mb-1 block font-mono">PPPoE Password</label>
-                    <div className="relative">
-                      <input
-                        type={formPasswordVisible ? 'text' : 'password'}
-                        value={editingClient.pppoe_password || ''}
-                        onChange={(e) => setEditingClient({ ...editingClient, pppoe_password: e.target.value })}
-                        className="w-full bg-white border border-gray-300 rounded-lg p-3 pr-10 text-gray-900 font-mono"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setFormPasswordVisible((v) => !v)}
-                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-cyan-700 cursor-pointer"
-                      >
-                        {formPasswordVisible ? <EyeOff size={16} /> : <Eye size={16} />}
-                      </button>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-gray-500 mb-1 block font-mono">MAC Address Dispositivo</label>
-                    <input
-                      type="text"
-                      placeholder="es. D8:50:E6:91:A4:0B"
-                      value={editingClient.mac_address || ''}
-                      onChange={(e) => setEditingClient({ ...editingClient, mac_address: e.target.value })}
-                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-emerald-700 font-mono uppercase"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-gray-500 mb-1 block font-mono">IP Statico Assegnato</label>
-                    <input
-                      type="text"
-                      placeholder="es. 10.100.14.22"
-                      value={editingClient.assigned_ip || ''}
-                      onChange={(e) => setEditingClient({ ...editingClient, assigned_ip: e.target.value })}
-                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-blue-700 font-mono"
-                    />
-                  </div>
-                  <div className="sm:col-span-2">
-                    <label className="text-gray-500 mb-1 block">Modello Apparato / CPE</label>
-                    <input
-                      type="text"
-                      value={editingClient.device_model || ''}
-                      onChange={(e) => setEditingClient({ ...editingClient, device_model: e.target.value })}
-                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-gray-900"
-                    />
-                  </div>
-                </div>
-              </div>
-              </div>
-
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <div className="bg-gray-50 p-4 rounded-2xl border border-gray-200 space-y-3">
-                <h4 className="text-xs font-semibold text-emerald-700 uppercase tracking-wider flex items-center gap-1">
-                  <DollarSign size={14} /> Piano, Fatturazione & Collaboratore
-                </h4>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className="sm:col-span-3">
-                    <label className="text-gray-500 mb-1 block">Piano Internet</label>
-                    <select
-                      value={editingClient.plan_id || ''}
-                      onChange={(e) => handleSelectPlan(e.target.value ? Number(e.target.value) : null)}
-                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-blue-700"
-                    >
-                      <option value="">Nessun piano / personalizzato</option>
-                      {plans.filter(p => p.active).map(p => (
-                        <option key={p.id} value={p.id}>{p.name} — € {p.monthly_fee.toFixed(2)}/mese</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-gray-500 mb-1 block">Ogni Quanto Paga il Cliente</label>
-                    <select
-                      value={editingClient.billing_cycle || 'MONTHLY'}
-                      onChange={(e) => setEditingClient({ ...editingClient, billing_cycle: e.target.value as BillingCycle })}
-                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-gray-900"
-                    >
-                      {(Object.keys(BILLING_CYCLE_INFO) as BillingCycle[]).map((cycle) => (
-                        <option key={cycle} value={cycle}>{BILLING_CYCLE_INFO[cycle].label}</option>
-                      ))}
-                    </select>
-                    <p className="text-[11px] text-gray-400 mt-1">
-                      Determina ogni quanto viene generata in automatico la prossima scadenza quando segni un canone come saldato.
-                    </p>
-                  </div>
-                  <div>
-                    <label className="text-gray-500 mb-1 block">Canone Ricorrente (€)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={editingClient.monthly_fee || 0}
-                      onChange={(e) => setEditingClient({ ...editingClient, monthly_fee: parseFloat(e.target.value) || 0 })}
-                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-emerald-700 font-mono font-bold"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-gray-500 mb-1 block">Costo Installazione Una-Tantum (€)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={editingClient.installation_fee || 0}
-                      onChange={(e) => setEditingClient({ ...editingClient, installation_fee: parseFloat(e.target.value) || 0 })}
-                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-gray-900 font-mono"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-gray-500 mb-1 block">Data Ultimo Pagamento</label>
-                    <input
-                      type="date"
-                      value={editingClient.last_payment_date || ''}
-                      onChange={(e) => {
-                        const lastPaymentDate = e.target.value;
-                        const cycleMonths = BILLING_CYCLE_INFO[editingClient.billing_cycle || 'MONTHLY'].months;
-                        setEditingClient({
-                          ...editingClient,
-                          last_payment_date: lastPaymentDate,
-                          // Propone da sola la prossima scadenza in base al ciclo di fatturazione: resta comunque modificabile a mano subito dopo.
-                          next_due_date: lastPaymentDate ? addMonthsToDateStr(lastPaymentDate, cycleMonths) : editingClient.next_due_date,
-                        });
-                      }}
-                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-gray-900 font-mono"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-gray-500 mb-1 block">Prossima Scadenza Pagamento</label>
-                    <input
-                      type="date"
-                      value={editingClient.next_due_date || ''}
-                      onChange={(e) => setEditingClient({ ...editingClient, next_due_date: e.target.value })}
-                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-amber-700 font-mono"
-                    />
-                    <p className="text-[11px] text-gray-400 mt-1">Proposta automaticamente dalla Data Ultimo Pagamento in base al ciclo scelto sopra; modificabile a mano.</p>
-                  </div>
-                  <div className="sm:col-span-2">
-                    <label className="text-gray-500 mb-1 block">Collaboratore di Riferimento</label>
-                    <select
-                      value={editingClient.collaborator_id || ''}
-                      onChange={(e) => handleSelectCollaborator(e.target.value ? Number(e.target.value) : null)}
-                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-cyan-700"
-                    >
-                      <option value="">Nessun Collaboratore Esercitante</option>
-                      {collaborators.map(col => (
-                        <option key={col.id} value={col.id}>{col.first_name} {col.last_name}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-gray-500 mb-1 block">Provvigione Ricorrente (€/mese)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={editingClient.collaborator_commission_fee || 0}
-                      onChange={(e) => setEditingClient({ ...editingClient, collaborator_commission_fee: parseFloat(e.target.value) || 0 })}
-                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-cyan-700 font-mono font-bold"
-                      disabled={!editingClient.collaborator_id}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-gray-500 mb-1 block">Provvigione Installazione Una-Tantum (€)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={editingClient.collaborator_installation_commission || 0}
-                      onChange={(e) => setEditingClient({ ...editingClient, collaborator_installation_commission: parseFloat(e.target.value) || 0 })}
-                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-purple-700 font-mono font-bold"
-                      disabled={!editingClient.collaborator_id}
-                    />
-                  </div>
-                  {!!editingClient.collaborator_id && (
-                    <p className="sm:col-span-2 text-[11px] text-gray-400">
-                      Provvigione Canone: € {Number(editingClient.collaborator_commission_fee || 0).toFixed(2)} | Provvigione Installazione: € {Number(editingClient.collaborator_installation_commission || 0).toFixed(2)} (erogata al saldo).
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              <div className="bg-gray-50 p-4 rounded-2xl border border-gray-200 space-y-3">
-                <h4 className="text-xs font-semibold text-purple-700 uppercase tracking-wider flex items-center gap-1">
-                  <FileSignature size={14} /> Stato, Contratto & Localizzazione
-                </h4>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div>
-                    <label className="text-gray-500 mb-1 block">Stato Cliente</label>
-                    <select
-                      value={editingClient.status || 'ACTIVE'}
-                      onChange={(e) => setEditingClient({ ...editingClient, status: e.target.value as ClientStatus })}
-                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-gray-900"
-                    >
-                      {(Object.keys(STATUS_LABELS) as ClientStatus[]).map((s) => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}
-                    </select>
-                  </div>
-                  {editingClient.status === 'CANCELLED' && (
-                    <div className="sm:col-span-2">
-                      <label className="text-gray-500 mb-1 block">Motivo della Disdetta</label>
-                      <input
-                        type="text"
-                        value={editingClient.cancellation_reason || ''}
-                        onChange={(e) => setEditingClient({ ...editingClient, cancellation_reason: e.target.value })}
-                        placeholder="es. Passato alla concorrenza, trasferito, insoddisfatto del servizio..."
-                        className="w-full bg-white border border-gray-300 rounded-lg p-3 text-gray-900"
-                      />
-                    </div>
-                  )}
-                  <div>
-                    <label className="text-gray-500 mb-1 block">Nodo di Rete (BTS/Ripetitore)</label>
-                    <select
-                      value={editingClient.network_node_id || ''}
-                      onChange={(e) => setEditingClient({ ...editingClient, network_node_id: e.target.value ? Number(e.target.value) : null })}
-                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-cyan-700"
-                    >
-                      <option value="">Nessuno / non assegnato</option>
-                      {networkNodes.map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-gray-500 mb-1 block">Inizio Contratto</label>
-                    <input type="date" value={editingClient.contract_start_date || ''} onChange={(e) => setEditingClient({ ...editingClient, contract_start_date: e.target.value })}
-                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-gray-900 font-mono" />
-                  </div>
-                  <div>
-                    <label className="text-gray-500 mb-1 block">Fine Contratto / Rinnovo</label>
-                    <input type="date" value={editingClient.contract_end_date || ''} onChange={(e) => setEditingClient({ ...editingClient, contract_end_date: e.target.value })}
-                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-gray-900 font-mono" />
-                  </div>
-                  <div>
-                    <label className="text-gray-500 mb-1 block">Latitudine</label>
-                    <input type="number" step="any" placeholder="es. 41.9028" value={editingClient.latitude ?? ''}
-                      onChange={(e) => setEditingClient({ ...editingClient, latitude: e.target.value ? Number(e.target.value) : null })}
-                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-gray-900 font-mono" />
-                  </div>
-                  <div>
-                    <label className="text-gray-500 mb-1 block">Longitudine</label>
-                    <input type="number" step="any" placeholder="es. 12.4964" value={editingClient.longitude ?? ''}
-                      onChange={(e) => setEditingClient({ ...editingClient, longitude: e.target.value ? Number(e.target.value) : null })}
-                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-gray-900 font-mono" />
-                  </div>
-                  <p className="sm:col-span-3 text-[11px] text-gray-400 -mt-1">Coordinate usate nella vista "Copertura & Rete". Puoi copiarle da Google Maps (click destro su un punto → "Cosa c'è qui").</p>
-                  <div className="sm:col-span-3">
-                    <label className="text-gray-500 mb-1 block">Note Contrattuali</label>
-                    <textarea value={editingClient.contract_notes || ''} onChange={(e) => setEditingClient({ ...editingClient, contract_notes: e.target.value })} rows={2}
-                      placeholder="Durata minima, penali di recesso, condizioni particolari..."
-                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-gray-900" />
-                  </div>
-                  <div className="sm:col-span-3 flex items-center gap-2">
-                    {editingClient.id ? (
-                      <>
-                        <button type="button" onClick={() => handleAttachDocument(editingClient.id!)} disabled={isAttachingDoc}
-                          className="flex items-center gap-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold px-3 py-2.5 rounded-xl cursor-pointer disabled:opacity-50">
-                          <Paperclip size={13} /> {isAttachingDoc ? 'Caricamento...' : editingClient.contract_document_path ? 'Sostituisci Documento' : 'Allega Documento Contratto'}
-                        </button>
-                        {editingClient.contract_document_path && (
-                          <button type="button" onClick={() => handleOpenDocument(editingClient.id!)}
-                            className="flex items-center gap-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 text-xs font-semibold px-3 py-2.5 rounded-xl cursor-pointer">
-                            <FileText size={13} /> Apri Documento
-                          </button>
-                        )}
-                      </>
-                    ) : (
-                      <p className="text-[11px] text-gray-400">Salva prima il cliente per poter allegare un documento di contratto.</p>
-                    )}
-                  </div>
-                </div>
-              </div>
-              </div>
-
-              <div className="flex justify-end gap-3 pt-3">
-                <button
-                  type="button"
-                  onClick={() => setShowModal(false)}
-                  className="px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl cursor-pointer"
-                >
-                  Annulla
-                </button>
-                <button
-                  type="submit"
-                  className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-xl cursor-pointer"
-                >
-                  Salva Cliente WISP
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+      {showModal && (
+        <ClientFormModal
+          client={editingClient as Client}
+          collaborators={collaborators}
+          plans={plans}
+          networkNodes={networkNodes}
+          onSave={handleSavePayload}
+          onClose={() => setShowModal(false)}
+        />
       )}
     </div>
   );

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { dbService } from '../dbService';
 import type { Client, Payment, Commission, MonthlyAnalyticsPoint, TopClient, CommissionByCollaborator } from '../types';
 import { BILLING_CYCLE_INFO } from '../types';
+import { computeBadPayersList } from '../financialEngine';
 import {
   TrendingUp,
   Users,
@@ -19,7 +20,11 @@ import {
   Award,
   UserPlus,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  UsersRound,
+  ShieldCheck,
+  ShieldAlert,
+  Hourglass
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, BarChart, Bar, CartesianGrid } from 'recharts';
 
@@ -112,6 +117,20 @@ export const DashboardView: React.FC<Props> = ({ onNavigateToClients }) => {
     .filter(c => c.payout_status === 'PENDING')
     .reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
   const totalCommissions = commissions.reduce((a, b) => a + b.amount, 0);
+  // Incasso netto: quanto resta in azienda dopo le provvigioni ai
+  // collaboratori (es. cliente 20€/mese, 5€ al collaboratore -> 15€ netti).
+  const netRevenue = totalRevenue - totalCommissions;
+
+  // Stato clienti: riusa lo stesso algoritmo di affidabilità del Modulo
+  // Finanziario (Cattivi Pagatori) per una vista rapida in Dashboard, senza
+  // dover aprire quella sezione per sapere "quanti clienti sono in regola".
+  const reliability = useMemo(() => computeBadPayersList(clients, payments), [clients, payments]);
+  const totalClients = clients.length;
+  const puntualiCount = reliability.filter((r) => r.currentOverdueCount === 0).length;
+  const ritardatariCount = totalClients - puntualiCount;
+  const puntualiPct = totalClients ? Math.round((puntualiCount / totalClients) * 100) : 0;
+  const ritardatariPct = totalClients ? 100 - puntualiPct : 0;
+  const clientsAwaitingPayment = new Set(payments.filter((p) => p.status === 'PENDING').map((p) => p.client_id)).size;
 
   const searchResults = quickSearch.trim()
     ? clients.filter(c =>
@@ -257,15 +276,15 @@ export const DashboardView: React.FC<Props> = ({ onNavigateToClients }) => {
         <div onClick={() => toggleMetric('revenue')} className="glass-panel p-5 rounded-2xl border border-gray-200 hover:border-emerald-300 transition-all cursor-pointer">
           <div className="flex justify-between items-start">
             <div>
-              <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">Incasso Totale Registrato</p>
-              <h3 className="text-2xl font-black text-gray-900 mt-2 font-mono">€ {totalRevenue.toFixed(2)}</h3>
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">Incasso Netto</p>
+              <h3 className="text-2xl font-black text-gray-900 mt-2 font-mono">€ {netRevenue.toFixed(2)}</h3>
             </div>
             <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl border border-emerald-200">
               <Wallet size={22} />
             </div>
           </div>
           <div className="mt-4 flex items-center justify-between text-xs text-gray-500">
-            <span>Canoni + Installazioni Una-Tantum</span>
+            <span>Lordo € {totalRevenue.toFixed(2)} − Provvigioni € {totalCommissions.toFixed(2)}</span>
             {expandedMetric === 'revenue' ? <ChevronUp size={14} className="text-gray-400" /> : <ChevronDown size={14} className="text-gray-400" />}
           </div>
           <div className="mt-1.5"><DeltaBadge pct={revenueDeltaPct} /></div>
@@ -303,6 +322,40 @@ export const DashboardView: React.FC<Props> = ({ onNavigateToClients }) => {
             {expandedMetric === 'commissions' ? <ChevronUp size={14} className="text-gray-400" /> : <ChevronDown size={14} className="text-gray-400" />}
           </div>
           <div className="mt-1.5"><DeltaBadge pct={commissionsDeltaPct} /></div>
+        </div>
+      </div>
+
+      {/* --- Stato Clienti: vista rapida di affidabilità pagamenti --- */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="glass-panel p-4 rounded-2xl border border-gray-200 flex items-center gap-3">
+          <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl border border-blue-200 shrink-0"><UsersRound size={18} /></div>
+          <div>
+            <span className="text-[11px] text-gray-400 uppercase block">Clienti Totali</span>
+            <span className="font-mono font-bold text-lg text-gray-900">{totalClients}</span>
+          </div>
+        </div>
+        <div className="glass-panel p-4 rounded-2xl border border-gray-200 flex items-center gap-3">
+          <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl border border-emerald-200 shrink-0"><ShieldCheck size={18} /></div>
+          <div>
+            <span className="text-[11px] text-gray-400 uppercase block">Clienti Puntuali</span>
+            <span className="font-mono font-bold text-lg text-emerald-700">{puntualiPct}%</span>
+            <span className="text-[10px] text-gray-400"> ({puntualiCount})</span>
+          </div>
+        </div>
+        <div className="glass-panel p-4 rounded-2xl border border-gray-200 flex items-center gap-3">
+          <div className="p-2.5 bg-rose-50 text-rose-600 rounded-xl border border-rose-200 shrink-0"><ShieldAlert size={18} /></div>
+          <div>
+            <span className="text-[11px] text-gray-400 uppercase block">Clienti Ritardatari</span>
+            <span className="font-mono font-bold text-lg text-rose-600">{ritardatariPct}%</span>
+            <span className="text-[10px] text-gray-400"> ({ritardatariCount})</span>
+          </div>
+        </div>
+        <div className="glass-panel p-4 rounded-2xl border border-gray-200 flex items-center gap-3">
+          <div className="p-2.5 bg-amber-50 text-amber-600 rounded-xl border border-amber-200 shrink-0"><Hourglass size={18} /></div>
+          <div>
+            <span className="text-[11px] text-gray-400 uppercase block">In Attesa di Pagamento</span>
+            <span className="font-mono font-bold text-lg text-amber-600">{clientsAwaitingPayment}</span>
+          </div>
         </div>
       </div>
 
@@ -475,8 +528,12 @@ export const DashboardView: React.FC<Props> = ({ onNavigateToClients }) => {
           <h3 className="text-base font-bold text-gray-900 flex items-center gap-2"><Activity size={18} className="text-cyan-600" /> Riepilogo Periodo ({period} mesi)</h3>
           <div className="space-y-2.5 text-sm">
             <div className="flex items-center justify-between p-2.5 bg-gray-50 rounded-lg border border-gray-200">
-              <span className="text-gray-500">Incasso periodo</span>
-              <span className="font-mono font-bold text-emerald-700">€ {periodTotals.revenue.toFixed(2)}</span>
+              <span className="text-gray-500">Incasso periodo (lordo)</span>
+              <span className="font-mono font-bold text-gray-700">€ {periodTotals.revenue.toFixed(2)}</span>
+            </div>
+            <div className="flex items-center justify-between p-2.5 bg-emerald-50 rounded-lg border border-emerald-200">
+              <span className="text-emerald-700 font-semibold">Incasso periodo (netto)</span>
+              <span className="font-mono font-bold text-emerald-700">€ {(periodTotals.revenue - periodTotals.commissions).toFixed(2)}</span>
             </div>
             <div className="flex items-center justify-between p-2.5 bg-gray-50 rounded-lg border border-gray-200">
               <span className="text-gray-500">Media mensile</span>

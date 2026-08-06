@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { dbService } from '../dbService';
 import { useToast } from './Toast';
-import type { Payment, Client, ClientLite, PaymentStatus } from '../types';
+import type { Payment, Client, ClientLite, PaymentStatus, Commission } from '../types';
 import { Wallet, CheckCircle2, Clock, AlertTriangle, Plus, Search, ShieldAlert } from 'lucide-react';
 import { localDateString } from '../dateUtils';
 import { BadPayersView } from './BadPayersView';
@@ -11,6 +11,7 @@ export const FinancialView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'PAYMENTS' | 'BAD_PAYERS'>('PAYMENTS');
   const [payments, setPayments] = useState<Payment[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
+  const [commissions, setCommissions] = useState<Commission[]>([]);
   const [statusFilter, setStatusFilter] = useState<'ALL' | PaymentStatus>('ALL');
   const [showAddModal, setShowAddModal] = useState(false);
 
@@ -52,9 +53,10 @@ export const FinancialView: React.FC = () => {
   }, [clientQuery]);
 
   const loadData = async () => {
-    const [p, loadedClients] = await Promise.all([dbService.getPayments(), dbService.getClients()]);
+    const [p, loadedClients, comm] = await Promise.all([dbService.getPayments(), dbService.getClients(), dbService.getCommissions()]);
     setPayments(p);
     setClients(loadedClients);
+    setCommissions(comm);
   };
 
   const handleOpenPayModal = (p: Payment) => {
@@ -120,6 +122,13 @@ export const FinancialView: React.FC = () => {
   const totalIncassato = payments.filter(p => p.status === 'PAID').reduce((a, b) => a + b.amount, 0);
   const totalInsoluti = payments.filter(p => p.status === 'OVERDUE').reduce((a, b) => a + b.amount, 0);
   const totalInAttesa = payments.filter(p => p.status === 'PENDING').reduce((a, b) => a + b.amount, 0);
+  // Incasso Netto = quanto incassato dai clienti meno le provvigioni generate
+  // (a chiunque siano destinate): es. cliente paga 20€/mese, 5€ al
+  // collaboratore -> 15€ restano in azienda. Le provvigioni non ancora
+  // liquidate sono comunque già un debito maturato, quindi si sottraggono
+  // a prescindere dallo stato di pagamento al collaboratore.
+  const totalCommissioni = commissions.reduce((a, b) => a + b.amount, 0);
+  const incassoNetto = totalIncassato - totalCommissioni;
 
   return (
     <div className="space-y-6 pb-12">
@@ -168,9 +177,11 @@ export const FinancialView: React.FC = () => {
         <>
           <div className="ultra-grid">
             <div className="glass-panel p-5 rounded-2xl border border-gray-200">
-              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider block">Totale Incassato</span>
-              <h3 className="text-2xl font-black text-emerald-600 mt-1 font-mono">€ {totalIncassato.toFixed(2)}</h3>
-              <span className="text-xs text-gray-400 mt-2 block">Pagamenti saldati con successo</span>
+              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider block">Incasso Netto</span>
+              <h3 className="text-2xl font-black text-emerald-600 mt-1 font-mono">€ {incassoNetto.toFixed(2)}</h3>
+              <span className="text-xs text-gray-400 mt-2 block">
+                Lordo € {totalIncassato.toFixed(2)} − Provvigioni € {totalCommissioni.toFixed(2)}
+              </span>
             </div>
 
             <div className="glass-panel p-5 rounded-2xl border border-gray-200">

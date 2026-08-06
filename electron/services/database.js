@@ -394,10 +394,6 @@ function uuid() {
   return crypto.randomUUID();
 }
 
-// Durata in mesi di ogni ciclo di fatturazione, per calcolare la prossima
-// scadenza quando un canone ricorrente viene saldato (vedi updatePaymentStatus).
-const BILLING_CYCLE_MONTHS = { MONTHLY: 1, BIMONTHLY: 2, QUARTERLY: 3, SEMIANNUAL: 6, ANNUAL: 12, CUSTOM: 1 };
-
 // WispCore è un gestionale per un'attività italiana: scadenze, bucket
 // mensili delle analytics e flag automatici (insoluti, rinnovi) devono
 // ragionare sul calendario di Roma esplicitamente, non su quello - magari
@@ -422,22 +418,6 @@ function localYearMonth(baseDate, monthOffset = 0) {
   const y = Math.floor(totalMonths / 12);
   const m = totalMonths % 12;
   return `${y}-${String(m + 1).padStart(2, '0')}`;
-}
-
-/**
- * Somma `months` a una data "YYYY-MM-DD" con pura aritmetica su anno/mese/
- * giorno: nessun oggetto Date coinvolto, quindi nessuna dipendenza dal fuso
- * orario. Clampa anche il giorno all'ultimo valido del mese di destinazione
- * (es. 31 gennaio + 1 mese = 28/29 febbraio, non un rollover a marzo).
- */
-function addMonthsToDate(dateStr, months) {
-  const [y, m, d] = dateStr.split('-').map(Number);
-  const totalMonths = y * 12 + (m - 1) + months;
-  const newYear = Math.floor(totalMonths / 12);
-  const newMonth = totalMonths % 12; // 0-indexed
-  const daysInNewMonth = new Date(newYear, newMonth + 1, 0).getDate();
-  const newDay = Math.min(d, daysInNewMonth);
-  return `${newYear}-${String(newMonth + 1).padStart(2, '0')}-${String(newDay).padStart(2, '0')}`;
 }
 
 async function getSQL() {

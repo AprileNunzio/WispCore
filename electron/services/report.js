@@ -28,6 +28,7 @@ function buildReportHtml({ months, monthly, bi, topClients, byCollaborator, gene
       (m) => `<tr>
         <td>${monthLabel(m.month)}</td>
         <td class="num">${eur(m.revenue)}</td>
+        <td class="num" style="font-weight:600">${eur(m.revenue - m.commissions)}</td>
         <td class="num">${m.newClients}</td>
         <td class="num">${eur(m.overdue)}</td>
         <td class="num">${eur(m.commissions)}</td>
@@ -95,8 +96,8 @@ function buildReportHtml({ months, monthly, bi, topClients, byCollaborator, gene
 
   <h2>Andamento Mensile</h2>
   <table>
-    <thead><tr><th>Mese</th><th class="num">Incasso</th><th class="num">Nuovi Clienti</th><th class="num">Insoluti</th><th class="num">Provvigioni</th></tr></thead>
-    <tbody>${monthlyRows || '<tr><td colspan="5">Nessun dato.</td></tr>'}</tbody>
+    <thead><tr><th>Mese</th><th class="num">Incasso Lordo</th><th class="num">Incasso Netto</th><th class="num">Nuovi Clienti</th><th class="num">Insoluti</th><th class="num">Provvigioni</th></tr></thead>
+    <tbody>${monthlyRows || '<tr><td colspan="6">Nessun dato.</td></tr>'}</tbody>
   </table>
 
   <h2>Top 10 Clienti per Fatturato</h2>

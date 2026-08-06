@@ -143,3 +143,27 @@ export function computeBadPayersList(clients: Client[], payments: Payment[]): Ba
   // Ordina prima per punteggio crescente (i casi peggiori in cima)
   return list.sort((a, b) => a.score - b.score);
 }
+
+export interface NetWispMetrics {
+  grossRevenue: number;
+  totalCommissionsEarned: number;
+  pendingCommissions: number;
+  paidCommissions: number;
+  netWispRevenue: number;
+}
+
+export function calculateNetWispMetrics(payments: Payment[] = [], commissions: { amount: number; payout_status: string; deleted?: boolean | number }[] = []): NetWispMetrics {
+  const grossRevenue = payments.filter(p => !p.deleted && p.status === 'PAID').reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+  const totalCommissionsEarned = commissions.filter(c => !c.deleted).reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
+  const pendingCommissions = commissions.filter(c => !c.deleted && c.payout_status === 'PENDING').reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
+  const paidCommissions = commissions.filter(c => !c.deleted && c.payout_status === 'PAID').reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
+  const netWispRevenue = Math.max(0, grossRevenue - totalCommissionsEarned);
+
+  return {
+    grossRevenue,
+    totalCommissionsEarned,
+    pendingCommissions,
+    paidCommissions,
+    netWispRevenue,
+  };
+}
