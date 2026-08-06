@@ -1,7 +1,7 @@
 {
   "name": "WispCore",
   "private": true,
-  "version": "1.0.18",
+  "version": "1.0.19",
   "type": "module",
   "main": "electron/main.js",
   "scripts": {
@@ -22,6 +22,7 @@
     "productName": "WispCore",
     "executableName": "WispCore",
     "publish": null,
+    "icon": "build/icon.png",
     "directories": {
       "output": "release"
     },
@@ -49,7 +50,9 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "WispCore"
+      "shortcutName": "WispCore",
+      "installerIcon": "build/icon.png",
+      "uninstallerIcon": "build/icon.png"
     }
   },
   "dependencies": {
