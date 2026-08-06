@@ -43,7 +43,8 @@
     "win": {
       "target": "nsis",
       "executableName": "WispCore",
-      "requestedExecutionLevel": "asInvoker"
+      "requestedExecutionLevel": "asInvoker",
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,
@@ -51,8 +52,8 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "WispCore",
-      "installerIcon": "build/icon.png",
-      "uninstallerIcon": "build/icon.png"
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico"
     }
   },
   "dependencies": {
