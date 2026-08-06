@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { dbService } from '../dbService';
 import { useToast, useConfirm } from './Toast';
+import { UserManagementPanel } from './UserManagementPanel';
 import {
   Settings,
   RefreshCw,
@@ -296,6 +297,8 @@ export const SettingsView: React.FC = () => {
         </h1>
         <p className="text-gray-500 text-xs mt-1">File system locale, disaster recovery e collegamento multi-sede</p>
       </div>
+
+      <UserManagementPanel />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* --- Auto-update --- */}

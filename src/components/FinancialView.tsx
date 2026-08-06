@@ -53,8 +53,12 @@ export const FinancialView: React.FC = () => {
   };
 
   const handleUpdateStatus = async (id: number, status: PaymentStatus) => {
-    await dbService.updatePaymentStatus(id, status);
-    notify(status === 'PAID' ? 'Pagamento segnato come saldato.' : 'Stato pagamento aggiornato.', 'success');
+    const result = await dbService.updatePaymentStatus(id, status);
+    if (status === 'PAID' && result?.nextDueDate) {
+      notify(`Pagamento saldato. Prossima scadenza generata in automatico: ${result.nextDueDate}.`, 'success');
+    } else {
+      notify(status === 'PAID' ? 'Pagamento segnato come saldato.' : 'Stato pagamento aggiornato.', 'success');
+    }
     loadData();
   };
 

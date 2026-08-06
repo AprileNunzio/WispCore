@@ -1,7 +1,20 @@
 import React, { useEffect, useState } from 'react';
 import { dbService } from '../dbService';
-import type { ClientDetail } from '../types';
-import { X, Wallet, AlertTriangle, CheckCircle2, Clock, Wifi, Network, Radio, User } from 'lucide-react';
+import type { ClientDetail, ClientStatus } from '../types';
+import { X, Wallet, AlertTriangle, CheckCircle2, Clock, Wifi, Network, Radio, User, FileSignature, History, Ban } from 'lucide-react';
+
+const STATUS_LABELS: Record<ClientStatus, string> = {
+  ACTIVE: 'Attivo',
+  SUSPENDED: 'Sospeso',
+  CANCELLED: 'Disdetto',
+  PROSPECT: 'Prospect',
+};
+const STATUS_BADGE: Record<ClientStatus, string> = {
+  ACTIVE: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  SUSPENDED: 'bg-amber-50 text-amber-700 border-amber-200',
+  CANCELLED: 'bg-gray-100 text-gray-500 border-gray-200',
+  PROSPECT: 'bg-blue-50 text-blue-700 border-blue-200',
+};
 
 interface Props {
   clientId: number;
@@ -27,6 +40,11 @@ export const ClientDetailModal: React.FC<Props> = ({ clientId, onClose }) => {
           <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
             <User className="text-blue-600" size={20} />
             {loading ? 'Caricamento...' : `${detail?.client.first_name} ${detail?.client.last_name}`}
+            {detail && (
+              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${STATUS_BADGE[detail.client.status]}`}>
+                {STATUS_LABELS[detail.client.status]}
+              </span>
+            )}
           </h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-700 cursor-pointer"><X size={20} /></button>
         </div>
@@ -79,7 +97,55 @@ export const ClientDetailModal: React.FC<Props> = ({ clientId, onClose }) => {
                   </div>
                 </div>
               )}
+              {(detail.client.contract_start_date || detail.client.contract_end_date || detail.client.contract_notes) && (
+                <div className="p-3 bg-purple-50 rounded-xl border border-purple-200 sm:col-span-2">
+                  <div className="text-[11px] text-purple-700 uppercase flex items-center gap-1 mb-1 font-semibold"><FileSignature size={12} /> Contratto</div>
+                  <div className="text-gray-700 text-sm">
+                    Inizio: <span className="font-mono">{detail.client.contract_start_date || 'N/D'}</span> • Fine/Rinnovo: <span className="font-mono">{detail.client.contract_end_date || 'N/D'}</span>
+                  </div>
+                  {detail.client.contract_notes && <div className="text-gray-500 text-xs mt-1">{detail.client.contract_notes}</div>}
+                </div>
+              )}
+              {detail.client.status === 'CANCELLED' && (
+                <div className="p-3 bg-rose-50 rounded-xl border border-rose-200 sm:col-span-2">
+                  <div className="text-[11px] text-rose-700 uppercase flex items-center gap-1 mb-1 font-semibold"><Ban size={12} /> Disdetta</div>
+                  <div className="text-gray-700 text-sm">
+                    Data: <span className="font-mono">{detail.client.cancelled_at?.split('T')[0] || 'N/D'}</span>
+                    {detail.client.cancellation_reason && <> • Motivo: {detail.client.cancellation_reason}</>}
+                  </div>
+                </div>
+              )}
             </div>
+
+            {detail.planHistory.length > 0 && (
+              <div>
+                <h3 className="text-sm font-bold text-gray-900 mb-2 flex items-center gap-1.5"><History size={15} className="text-purple-600" /> Storico Piano & Canone</h3>
+                <div className="overflow-x-auto border border-gray-200 rounded-xl">
+                  <table className="w-full text-left text-sm text-gray-600">
+                    <thead className="bg-gray-100 text-gray-500 uppercase text-xs">
+                      <tr>
+                        <th className="p-2.5">Data</th>
+                        <th className="p-2.5">Piano Precedente</th>
+                        <th className="p-2.5">Nuovo Piano</th>
+                        <th className="p-2.5">Canone Precedente</th>
+                        <th className="p-2.5">Nuovo Canone</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {detail.planHistory.map((h) => (
+                        <tr key={h.id}>
+                          <td className="p-2.5 font-mono text-gray-400">{h.changed_at.split('T')[0]}</td>
+                          <td className="p-2.5">{h.old_plan_name || '—'}</td>
+                          <td className="p-2.5 font-semibold text-gray-900">{h.new_plan_name || '—'}</td>
+                          <td className="p-2.5 font-mono text-gray-400">€ {(h.old_monthly_fee ?? 0).toFixed(2)}</td>
+                          <td className="p-2.5 font-mono font-bold text-emerald-700">€ {(h.new_monthly_fee ?? 0).toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             <div>
               <h3 className="text-sm font-bold text-gray-900 mb-2">Storico Pagamenti Completo</h3>
