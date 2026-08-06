@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { dbService } from '../dbService';
 import { useToast } from './Toast';
-import type { Collaborator, Commission, CommissionByCollaborator } from '../types';
-import { Users, UserPlus, Award, Phone, Mail, CheckCircle2, Clock, Edit3, TrendingUp, Wallet } from 'lucide-react';
+import type { Client, Collaborator, Commission, CommissionByCollaborator } from '../types';
+import { Users, UserPlus, Award, Phone, Mail, CheckCircle2, Clock, Edit3, TrendingUp, Wallet, UserRound, ArrowRight } from 'lucide-react';
+import { CollaboratorDetailModal } from './CollaboratorDetailModal';
 
 const emptyForm = { first_name: '', last_name: '', phone: '', email: '', default_commission_fee: 0 };
 
@@ -10,23 +11,27 @@ export const CollaboratorsView: React.FC = () => {
   const { notify } = useToast();
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
   const [commissions, setCommissions] = useState<Commission[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
   const [stats, setStats] = useState<CommissionByCollaborator[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState<Partial<Collaborator>>(emptyForm);
+  const [selectedCollaboratorId, setSelectedCollaboratorId] = useState<number | null>(null);
 
   useEffect(() => {
     loadData();
   }, []);
 
   const loadData = async () => {
-    const [c, comm, byCollab] = await Promise.all([
+    const [c, comm, byCollab, cl] = await Promise.all([
       dbService.getCollaborators(),
       dbService.getCommissions(),
       dbService.getCommissionsByCollaborator(),
+      dbService.getClients(),
     ]);
     setCollaborators(c);
     setCommissions(comm);
     setStats(byCollab);
+    setClients(cl);
   };
 
   const handleOpenNew = () => {
@@ -63,7 +68,7 @@ export const CollaboratorsView: React.FC = () => {
             <Users className="text-cyan-600" size={24} />
             <span>Collaboratori sul Campo & Provvigioni</span>
           </h1>
-          <p className="text-gray-500 text-sm mt-1">Gestione tecnici/commerciali esterni, guadagno di default e calcolo automatico dei rimborsi</p>
+          <p className="text-gray-500 text-sm mt-1">Gestione tecnici/commerciali esterni: il guadagno non è unico, si concorda per singolo cliente (es. su Mario Rossi 5€, su Nunzio Aprile 8€)</p>
         </div>
 
         <button
@@ -81,9 +86,14 @@ export const CollaboratorsView: React.FC = () => {
           const totalEarned = colCommissions.reduce((a, b) => a + b.amount, 0);
           const pendingAmount = colCommissions.filter(c => c.payout_status === 'PENDING').reduce((a, b) => a + b.amount, 0);
           const stat = stats.find((s) => s.id === col.id);
+          const assignedClients = clients.filter(c => c.collaborator_id === col.id);
 
           return (
-            <div key={col.id} className="glass-panel p-5 rounded-2xl border border-gray-200 space-y-4">
+            <div
+              key={col.id}
+              onClick={() => setSelectedCollaboratorId(col.id)}
+              className="glass-panel p-5 rounded-2xl border border-gray-200 space-y-4 cursor-pointer hover:border-cyan-300 hover:shadow-md transition-all"
+            >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-cyan-50 text-cyan-600 border border-cyan-200 flex items-center justify-center font-bold text-sm">
@@ -95,7 +105,11 @@ export const CollaboratorsView: React.FC = () => {
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <button onClick={() => handleEdit(col)} className="p-2 bg-gray-100 hover:bg-gray-200 text-blue-600 rounded-lg border border-gray-200 cursor-pointer" title="Modifica">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleEdit(col); }}
+                    className="p-2 bg-gray-100 hover:bg-gray-200 text-blue-600 rounded-lg border border-gray-200 cursor-pointer"
+                    title="Modifica"
+                  >
                     <Edit3 size={14} />
                   </button>
                   <Award className="text-cyan-600" size={20} />
@@ -113,9 +127,27 @@ export const CollaboratorsView: React.FC = () => {
 
               {!!col.default_commission_fee && (
                 <div className="text-xs text-cyan-700 bg-cyan-50 border border-cyan-200 rounded-lg px-2.5 py-1.5 inline-flex items-center gap-1.5">
-                  <TrendingUp size={12} /> Guadagno di default: € {col.default_commission_fee.toFixed(2)}/mese per cliente
+                  <TrendingUp size={12} /> Proposta di default: € {col.default_commission_fee.toFixed(2)}/mese (modificabile per ogni cliente)
                 </div>
               )}
+
+              <div>
+                <span className="text-[11px] text-gray-400 uppercase font-semibold flex items-center gap-1.5 mb-1.5">
+                  <UserRound size={12} /> Guadagno per Cliente ({assignedClients.length})
+                </span>
+                {assignedClients.length === 0 ? (
+                  <p className="text-xs text-gray-400 italic">Nessun cliente assegnato al momento.</p>
+                ) : (
+                  <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
+                    {assignedClients.map((client) => (
+                      <div key={client.id} className="flex items-center justify-between text-xs bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1.5">
+                        <span className="text-gray-700 truncate">{client.first_name} {client.last_name}</span>
+                        <span className="font-mono font-bold text-cyan-700 shrink-0 ml-2">€ {(client.collaborator_commission_fee ?? 0).toFixed(2)}/mese</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
 
               <div className="bg-gray-50 p-3 rounded-xl border border-gray-200 flex items-center justify-between text-sm">
                 <div>
@@ -126,6 +158,10 @@ export const CollaboratorsView: React.FC = () => {
                   <span className="text-[11px] text-amber-700 uppercase block font-semibold">Da Liquidare</span>
                   <span className="font-mono font-bold text-amber-600">€ {(stat?.pending_amount ?? pendingAmount).toFixed(2)}</span>
                 </div>
+              </div>
+
+              <div className="text-xs text-cyan-700 font-semibold flex items-center justify-end gap-1">
+                Vista a 360° <ArrowRight size={12} />
               </div>
             </div>
           );
@@ -264,6 +300,20 @@ export const CollaboratorsView: React.FC = () => {
           </div>
         </div>
       )}
+
+      {selectedCollaboratorId !== null && (() => {
+        const selected = collaborators.find((c) => c.id === selectedCollaboratorId);
+        if (!selected) return null;
+        return (
+          <CollaboratorDetailModal
+            collaborator={selected}
+            commissions={commissions.filter((c) => c.collaborator_id === selected.id)}
+            clients={clients}
+            onClose={() => setSelectedCollaboratorId(null)}
+            onToggleStatus={(id, status) => { handleToggleCommissionStatus(id, status); }}
+          />
+        );
+      })()}
     </div>
   );
 };

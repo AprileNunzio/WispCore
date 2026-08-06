@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { dialog } from 'electron';
-import { getAppPaths, ensureDirectories, appendLog } from './paths.js';
+import { ensureDirectories, appendLog } from './paths.js';
 import { sha256File, decryptBuffer } from './crypto.js';
 import { readConfig, updateConfig } from './config.js';
 import * as database from './database.js';
@@ -31,9 +31,42 @@ export function runBackup({ reason = 'manual' } = {}) {
   });
 
   appendLog(`Backup creato (${reason}): ${fileName}`);
-  pruneOldBackups();
+  pruneBackupsInDir(paths.backupsDir);
+
+  // Replica enterprise su una seconda destinazione (NAS, disco esterno, unità
+  // di rete...), se l'utente l'ha configurata. Best-effort: se la cartella
+  // non è raggiungibile (es. disco esterno scollegato) il backup primario,
+  // già completato sopra, non deve essere compromesso in alcun modo.
+  copyToSecondaryDestination(fileName, dbBytes);
 
   return { fileName, path: destPath, createdAt: new Date().toISOString(), size: dbBytes.length };
+}
+
+function copyToSecondaryDestination(fileName, dbBytes) {
+  const config = readConfig();
+  const secondary = config.secondaryBackup;
+  if (!secondary?.enabled || !secondary.directory) return;
+
+  try {
+    if (!fs.existsSync(secondary.directory)) {
+      fs.mkdirSync(secondary.directory, { recursive: true });
+    }
+    const destPath = path.join(secondary.directory, fileName);
+    fs.writeFileSync(destPath, dbBytes);
+    fs.writeFileSync(`${destPath}.sha256`, sha256File(dbBytes));
+    pruneBackupsInDir(secondary.directory);
+
+    updateConfig((c) => {
+      c.secondaryBackup.lastBackupAt = new Date().toISOString();
+      c.secondaryBackup.lastError = null;
+    });
+    appendLog(`Backup secondario replicato in: ${destPath}`);
+  } catch (err) {
+    updateConfig((c) => {
+      c.secondaryBackup.lastError = err.message;
+    });
+    appendLog(`Backup secondario fallito (${secondary.directory}): ${err.message}`);
+  }
 }
 
 export function runDailyBackupIfNeeded() {
@@ -45,15 +78,14 @@ export function runDailyBackupIfNeeded() {
   return runBackup({ reason: 'daily-auto' });
 }
 
-export function listBackups() {
-  const paths = ensureDirectories();
-  if (!fs.existsSync(paths.backupsDir)) return [];
+function listBackupsInDir(dir) {
+  if (!fs.existsSync(dir)) return [];
 
   return fs
-    .readdirSync(paths.backupsDir)
+    .readdirSync(dir)
     .filter((f) => f.endsWith('.db.bak'))
     .map((f) => {
-      const full = path.join(paths.backupsDir, f);
+      const full = path.join(dir, f);
       const stat = fs.statSync(full);
       const checksumPath = `${full}.sha256`;
       let checksumOk = null;
@@ -66,9 +98,14 @@ export function listBackups() {
     .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 }
 
-function pruneOldBackups() {
-  const paths = getAppPaths();
-  const backups = listBackups(); // newest first
+export function listBackups() {
+  const paths = ensureDirectories();
+  return listBackupsInDir(paths.backupsDir);
+}
+
+/** Stessa politica di retention (30 giornalieri + 1 al mese per 12 mesi) applicata a qualunque cartella di backup, primaria o secondaria. */
+function pruneBackupsInDir(dir) {
+  const backups = listBackupsInDir(dir); // newest first
 
   const keep = new Set(backups.slice(0, DAILY_RETENTION).map((b) => b.fileName));
 
@@ -83,8 +120,8 @@ function pruneOldBackups() {
   for (const b of backups) {
     if (!keep.has(b.fileName)) {
       try {
-        fs.unlinkSync(path.join(paths.backupsDir, b.fileName));
-        const sidecar = path.join(paths.backupsDir, `${b.fileName}.sha256`);
+        fs.unlinkSync(path.join(dir, b.fileName));
+        const sidecar = path.join(dir, `${b.fileName}.sha256`);
         if (fs.existsSync(sidecar)) fs.unlinkSync(sidecar);
       } catch {
         // best-effort pruning
@@ -165,4 +202,57 @@ export async function importFromFile(browserWindow, actor) {
   }
   appendLog(`Import manuale eseguito da: ${filePaths[0]}`);
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// Backup secondario enterprise: replica in tempo reale (ad ogni backup
+// primario) su una seconda cartella a scelta dell'utente - tipicamente un
+// NAS, un disco esterno o un'unità di rete condivisa aziendale.
+// ---------------------------------------------------------------------------
+
+export function getSecondaryBackupSettings() {
+  const config = readConfig();
+  const secondary = config.secondaryBackup || {};
+  return {
+    enabled: !!secondary.enabled,
+    directory: secondary.directory || null,
+    lastBackupAt: secondary.lastBackupAt || null,
+    lastError: secondary.lastError || null,
+  };
+}
+
+/** Apre il selettore di cartelle nativo. Non salva nulla: la conferma avviene con setSecondaryBackupSettings. */
+export async function pickSecondaryBackupDirectory(browserWindow) {
+  const { canceled, filePaths } = await dialog.showOpenDialog(browserWindow, {
+    title: 'Scegli la cartella per il backup secondario',
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  if (canceled || filePaths.length === 0) return null;
+  return filePaths[0];
+}
+
+export function setSecondaryBackupSettings({ enabled, directory }) {
+  if (enabled && !directory) {
+    throw new Error('Seleziona prima una cartella di destinazione per il backup secondario.');
+  }
+  if (directory) {
+    // Verifica subito che la cartella sia scrivibile, per non scoprirlo solo
+    // al prossimo backup notturno.
+    try {
+      if (!fs.existsSync(directory)) fs.mkdirSync(directory, { recursive: true });
+      fs.accessSync(directory, fs.constants.W_OK);
+    } catch (err) {
+      throw new Error(`Cartella non scrivibile: ${err.message}`);
+    }
+  }
+
+  updateConfig((c) => {
+    c.secondaryBackup = c.secondaryBackup || {};
+    c.secondaryBackup.enabled = !!enabled;
+    c.secondaryBackup.directory = directory ?? c.secondaryBackup.directory;
+    c.secondaryBackup.lastError = null;
+  });
+
+  appendLog(`Backup secondario ${enabled ? 'attivato' : 'disattivato'}${directory ? ` su ${directory}` : ''}.`);
+  return getSecondaryBackupSettings();
 }

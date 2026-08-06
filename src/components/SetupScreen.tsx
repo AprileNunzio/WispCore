@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { dbService } from '../dbService';
 import { useToast } from './Toast';
-import { ShieldCheck, Lock, User, KeyRound, FolderTree, History } from 'lucide-react';
+import { ShieldCheck, Lock, User, KeyRound, FolderTree, History, Eye, EyeOff } from 'lucide-react';
 import type { AppPaths } from '../types';
 
 interface Props {
@@ -13,6 +13,7 @@ export const SetupScreen: React.FC<Props> = ({ onSetupComplete }) => {
   const [username, setUsername] = useState('admin');
   const [pin, setPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
+  const [showPin, setShowPin] = useState(false);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [appPaths, setAppPaths] = useState<AppPaths | null>(null);
@@ -119,12 +120,21 @@ export const SetupScreen: React.FC<Props> = ({ onSetupComplete }) => {
               <div className="relative">
                 <KeyRound className="absolute left-3.5 top-3.5 text-gray-400" size={18} />
                 <input
-                  type="password"
+                  type={showPin ? 'text' : 'password'}
                   value={pin}
                   onChange={(e) => setPin(e.target.value)}
                   placeholder="••••"
-                  className="w-full bg-white border border-gray-300 rounded-xl py-3 pl-11 pr-4 text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-sm transition-all font-mono"
+                  className="w-full bg-white border border-gray-300 rounded-xl py-3 pl-11 pr-10 text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-sm transition-all font-mono"
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPin((v) => !v)}
+                  tabIndex={-1}
+                  className="absolute right-3 top-3 text-gray-400 hover:text-gray-600 cursor-pointer"
+                  title={showPin ? 'Nascondi PIN' : 'Mostra PIN'}
+                >
+                  {showPin ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
               </div>
             </div>
 
@@ -135,7 +145,7 @@ export const SetupScreen: React.FC<Props> = ({ onSetupComplete }) => {
               <div className="relative">
                 <Lock className="absolute left-3.5 top-3.5 text-gray-400" size={18} />
                 <input
-                  type="password"
+                  type={showPin ? 'text' : 'password'}
                   value={confirmPin}
                   onChange={(e) => setConfirmPin(e.target.value)}
                   placeholder="••••"

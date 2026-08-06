@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { dbService } from './dbService';
-import { ToastProvider, ConfirmProvider } from './components/Toast';
+import { ToastProvider, ConfirmProvider, useToast, useConfirm } from './components/Toast';
 import { SetupScreen } from './components/SetupScreen';
 import { LockScreen } from './components/LockScreen';
 import { DashboardView } from './components/DashboardView';
@@ -11,6 +11,7 @@ import { PlansView } from './components/PlansView';
 import { ScadenzeView } from './components/ScadenzeView';
 import { EmailTemplatesView } from './components/EmailTemplatesView';
 import { SettingsView } from './components/SettingsView';
+import type { UpdateEvent } from './types';
 import {
   LayoutDashboard,
   Users,
@@ -23,10 +24,48 @@ import {
   X,
   Router,
   CalendarClock,
-  MailPlus
+  MailPlus,
+  type LucideIcon,
 } from 'lucide-react';
 
 type Tab = 'dashboard' | 'clients' | 'collaborators' | 'financial' | 'plans' | 'scadenze' | 'templates' | 'settings';
+
+interface NavItem {
+  id: Tab;
+  label: string;
+  icon: LucideIcon;
+}
+
+interface NavSection {
+  heading: string;
+  items: NavItem[];
+}
+
+// Testi e icone del menu laterale centralizzati qui: un solo posto da
+// modificare per rinominare una voce o riorganizzare le sezioni, invece di
+// cercare tra i bottoni JSX ripetuti. Ogni bottone applica poi `truncate` +
+// `title` cosi il testo non spezza mai il layout, anche se una voce futura
+// dovesse avere un'etichetta lunga.
+const NAV_SECTIONS: NavSection[] = [
+  {
+    heading: 'Operativo',
+    items: [
+      { id: 'dashboard', label: 'Dashboard Operativa', icon: LayoutDashboard },
+      { id: 'clients', label: 'Gestione Anagrafica', icon: Users },
+      { id: 'plans', label: 'Piani Internet', icon: Router },
+      { id: 'collaborators', label: 'Collaboratori & Provvigioni', icon: UserCheck },
+      { id: 'financial', label: 'Modulo Finanziario', icon: Wallet },
+      { id: 'scadenze', label: 'Scadenzario Dettagliato', icon: CalendarClock },
+    ],
+  },
+  {
+    heading: 'Sistema',
+    items: [
+      { id: 'templates', label: 'Template Email', icon: MailPlus },
+      { id: 'settings', label: 'Impostazioni & Sync', icon: Settings },
+    ],
+  },
+];
 
 const navItemClass = (active: boolean) =>
   `w-full flex items-center gap-3 px-3.5 py-3 rounded-xl transition-all cursor-pointer text-sm ${
@@ -35,6 +74,49 @@ const navItemClass = (active: boolean) =>
       : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100 border border-transparent'
   }`;
 
+/**
+ * Ascolta in background gli eventi di auto-update inoltrati dal main process
+ * (il controllo parte da solo all'avvio, vedi electron/main.js) e, appena il
+ * download è completo, chiede conferma all'utente prima di installare.
+ * Non renderizza nulla: usa solo Toast/Confirm già disponibili nel contesto.
+ */
+const useAutoUpdateNotifier = (isUnlocked: boolean) => {
+  const { notify } = useToast();
+  const confirm = useConfirm();
+  const [pendingInstall, setPendingInstall] = useState<UpdateEvent | null>(null);
+
+  useEffect(() => {
+    const unsubscribe = dbService.onUpdateEvent((evt) => {
+      if (evt.type === 'downloading') {
+        notify(`Trovata la versione v${evt.version}: download in corso in background...`, 'info');
+      } else if (evt.type === 'downloaded') {
+        setPendingInstall(evt);
+      }
+      // Gli errori del controllo automatico restano silenziosi: una rete
+      // assente all'avvio non deve disturbare l'utente ogni volta.
+    });
+    return unsubscribe;
+  }, [notify]);
+
+  useEffect(() => {
+    if (!pendingInstall || !isUnlocked) return;
+    const evt = pendingInstall;
+    setPendingInstall(null);
+
+    (async () => {
+      const ok = await confirm(
+        `È disponibile la versione v${evt.version} di WispCore, già scaricata. Vuoi installarla ora? L'app si chiuderà per completare l'aggiornamento.`
+      );
+      if (!ok) return;
+      try {
+        await dbService.installUpdate();
+      } catch (err) {
+        notify(err instanceof Error ? err.message : "Impossibile avviare l'installer.", 'error');
+      }
+    })();
+  }, [pendingInstall, isUnlocked, confirm, notify]);
+};
+
 const AppShell: React.FC = () => {
   const [isSetupComplete, setIsSetupComplete] = useState<boolean | null>(null);
   const [isUnlocked, setIsUnlocked] = useState(false);
@@ -42,6 +124,8 @@ const AppShell: React.FC = () => {
   const [clientSearchQuery, setClientSearchQuery] = useState('');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [bootError, setBootError] = useState<string | null>(null);
+
+  useAutoUpdateNotifier(isUnlocked);
 
   useEffect(() => {
     (async () => {
@@ -62,6 +146,11 @@ const AppShell: React.FC = () => {
       });
     }
   }, [isUnlocked]);
+
+  const handleNavigate = useCallback((tab: Tab) => {
+    setActiveTab(tab);
+    setMobileMenuOpen(false);
+  }, []);
 
   if (bootError) {
     return (
@@ -106,58 +195,33 @@ const AppShell: React.FC = () => {
       }`}>
         <div>
           <div className="flex items-center gap-3 mb-8">
-            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-blue-600 to-cyan-500 flex items-center justify-center text-white shadow-lg shadow-blue-500/20">
+            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-blue-600 to-cyan-500 flex items-center justify-center text-white shadow-lg shadow-blue-500/20 shrink-0">
               <Wifi size={22} />
             </div>
-            <div>
-              <h2 className="text-xl font-extrabold text-gray-900 tracking-wider flex items-center gap-1">
+            <div className="min-w-0">
+              <h2 className="text-xl font-extrabold text-gray-900 tracking-wider flex items-center gap-1 truncate">
                 WispCore
               </h2>
-              <span className="text-xs text-cyan-700 font-mono font-medium block">Alynet Edition • Enterprise</span>
+              <span className="text-xs text-cyan-700 font-mono font-medium block truncate">Alynet Edition • Enterprise</span>
             </div>
           </div>
 
-          <nav className="space-y-1.5 font-medium">
-            <button onClick={() => { setActiveTab('dashboard'); setMobileMenuOpen(false); }} className={navItemClass(activeTab === 'dashboard')}>
-              <LayoutDashboard size={18} />
-              <span>Dashboard Operativa</span>
-            </button>
-
-            <button onClick={() => { setActiveTab('clients'); setMobileMenuOpen(false); }} className={navItemClass(activeTab === 'clients')}>
-              <Users size={18} />
-              <span>Anagrafica & Tecnica WISP</span>
-            </button>
-
-            <button onClick={() => { setActiveTab('plans'); setMobileMenuOpen(false); }} className={navItemClass(activeTab === 'plans')}>
-              <Router size={18} />
-              <span>Piani Internet</span>
-            </button>
-
-            <button onClick={() => { setActiveTab('collaborators'); setMobileMenuOpen(false); }} className={navItemClass(activeTab === 'collaborators')}>
-              <UserCheck size={18} />
-              <span>Collaboratori & Provvigioni</span>
-            </button>
-
-            <button onClick={() => { setActiveTab('financial'); setMobileMenuOpen(false); }} className={navItemClass(activeTab === 'financial')}>
-              <Wallet size={18} />
-              <span>Modulo Finanziario</span>
-            </button>
-
-            <button onClick={() => { setActiveTab('scadenze'); setMobileMenuOpen(false); }} className={navItemClass(activeTab === 'scadenze')}>
-              <CalendarClock size={18} />
-              <span>Scadenzario Dettagliato</span>
-            </button>
-
-            <button onClick={() => { setActiveTab('templates'); setMobileMenuOpen(false); }} className={navItemClass(activeTab === 'templates')}>
-              <MailPlus size={18} />
-              <span>Template Email</span>
-            </button>
-
-            <button onClick={() => { setActiveTab('settings'); setMobileMenuOpen(false); }} className={navItemClass(activeTab === 'settings')}>
-              <Settings size={18} />
-              <span>Impostazioni & Sync</span>
-            </button>
-          </nav>
+          {NAV_SECTIONS.map((section) => (
+            <nav key={section.heading} className="space-y-1.5 font-medium mb-5 last:mb-0">
+              <p className="px-3.5 text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">{section.heading}</p>
+              {section.items.map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => handleNavigate(item.id)}
+                  title={item.label}
+                  className={navItemClass(activeTab === item.id)}
+                >
+                  <item.icon size={18} className="shrink-0" />
+                  <span className="truncate">{item.label}</span>
+                </button>
+              ))}
+            </nav>
+          ))}
         </div>
 
         <div className="pt-6 border-t border-gray-200">

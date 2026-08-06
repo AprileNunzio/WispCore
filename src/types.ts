@@ -130,6 +130,13 @@ export interface BackupInfo {
   checksumOk: boolean | null;
 }
 
+export interface SecondaryBackupSettings {
+  enabled: boolean;
+  directory: string | null;
+  lastBackupAt: string | null;
+  lastError: string | null;
+}
+
 export interface LockoutState {
   isLocked: boolean;
   lockedUntil: string | null;
@@ -174,11 +181,21 @@ export interface UpdateCheckResult {
   publishedAt: string | null;
 }
 
+/** Evento push del ciclo di auto-update, inoltrato dal main process durante il controllo/download in background. */
+export interface UpdateEvent {
+  type: 'downloading' | 'progress' | 'downloaded' | 'error';
+  version?: string;
+  percent?: number;
+  releaseUrl?: string | null;
+  message?: string;
+}
+
 export interface MonthlyAnalyticsPoint {
   month: string; // YYYY-MM
   revenue: number;
   newClients: number;
   overdue: number;
+  commissions: number;
 }
 
 export interface TopClient {

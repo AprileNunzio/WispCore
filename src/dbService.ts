@@ -11,6 +11,7 @@ import type {
   Plan,
   EmailTemplate,
   SmtpSettings,
+  UpdateEvent,
 } from './types';
 
 /**
@@ -133,6 +134,9 @@ export const dbService = {
   restoreBackup: (fileName: string) => bridge().backup.restore(fileName),
   exportFullBackup: () => bridge().backup.exportToFile(),
   importFullBackup: () => bridge().backup.importFromFile(),
+  getSecondaryBackupSettings: () => bridge().backup.getSecondarySettings(),
+  pickSecondaryBackupDir: () => bridge().backup.pickSecondaryDir(),
+  setSecondaryBackupSettings: (settings: { enabled: boolean; directory?: string | null }) => bridge().backup.setSecondarySettings(settings),
 
   // ---- MariaDB multi-site sync ----
   getSyncSettings: (): Promise<SyncSettings> => bridge().sync.getSettings(),
@@ -147,4 +151,7 @@ export const dbService = {
 
   // ---- Updates ----
   checkForUpdate: () => bridge().update.check(),
+  downloadUpdateNow: () => bridge().update.downloadNow(),
+  installUpdate: () => bridge().update.install(),
+  onUpdateEvent: (callback: (event: UpdateEvent) => void) => bridge().update.onEvent(callback),
 };

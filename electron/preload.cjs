@@ -73,6 +73,9 @@ contextBridge.exposeInMainWorld('wispcore', {
     restore: (fileName) => invoke('backup:restore', fileName),
     exportToFile: () => invoke('backup:exportToFile'),
     importFromFile: () => invoke('backup:importFromFile'),
+    getSecondarySettings: () => invoke('backup:getSecondarySettings'),
+    pickSecondaryDir: () => invoke('backup:pickSecondaryDir'),
+    setSecondarySettings: (settings) => invoke('backup:setSecondarySettings', settings),
   },
   sync: {
     getSettings: () => invoke('sync:getSettings'),
@@ -87,6 +90,16 @@ contextBridge.exposeInMainWorld('wispcore', {
   },
   update: {
     check: () => invoke('update:check'),
+    downloadNow: () => invoke('update:downloadNow'),
+    install: () => invoke('update:install'),
+    // Sottoscrizione agli eventi push del ciclo di auto-update (downloading /
+    // progress / downloaded / error) inviati dal main process. Ritorna una
+    // funzione di cleanup per rimuovere il listener.
+    onEvent: (callback) => {
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on('update:event', listener);
+      return () => ipcRenderer.removeListener('update:event', listener);
+    },
   },
   migrate: {
     legacyLocalStorage: (payload) => invoke('migrate:legacyLocalStorage', payload),

@@ -147,7 +147,7 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
         <div>
           <h1 className="text-2xl font-bold text-gray-900 tracking-tight flex items-center gap-2">
             <Users className="text-blue-600" size={24} />
-            <span>Gestione Anagrafica & Modulo Tecnico WISP</span>
+            <span>Gestione Anagrafica</span>
           </h1>
           <p className="text-gray-500 text-sm mt-1">Configurazione PPPoE, indirizzi IP, MAC Address e contratti di fatturazione</p>
         </div>
