@@ -149,7 +149,9 @@ export async function checkAndDownloadUpdateInBackground(send) {
   }
 }
 
-/** Avvia l'installer già scaricato e chiude WispCore per permettere la sovrascrittura dei file. */
+import { execFile } from 'child_process';
+
+/** Avvia l'installer già scaricato in modalità silenziosa (/S) e chiude WispCore per permettere l'aggiornamento automatico. */
 export function installDownloadedUpdate() {
   const config = readConfig();
   const info = config.updater;
@@ -157,11 +159,11 @@ export function installDownloadedUpdate() {
     throw new Error('Nessun aggiornamento scaricato pronto per l\'installazione.');
   }
 
-  shell.openPath(info.installerPath).then((err) => {
-    if (err) appendLog(`Impossibile avviare l'installer: ${err}`);
+  // Esegue l'installer NSIS con lo switch /S per l'installazione silenziosa in background
+  execFile(info.installerPath, ['/S'], (err) => {
+    if (err) appendLog(`Impossibile avviare l'installer silenzioso: ${err.message}`);
   });
 
-  // Piccolo ritardo per dare tempo al sistema operativo di aprire l'installer
-  // prima che WispCore chiuda i propri file (DB compreso).
-  setTimeout(() => app.quit(), 800);
+  // Piccolo ritardo prima che WispCore si chiuda e rilasci i file di sistema
+  setTimeout(() => app.quit(), 1000);
 }

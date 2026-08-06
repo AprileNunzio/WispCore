@@ -104,12 +104,15 @@ export const FinancialView: React.FC = () => {
     e.preventDefault();
     if (!newPayment.client_id || newPayment.amount <= 0) return;
 
+    const today = localDateString();
     await dbService.addPayment({
       ...newPayment,
-      payment_date: newPayment.status === 'PAID' ? localDateString() : ''
+      due_date: today,
+      payment_date: today,
+      status: 'PAID'
     });
 
-    notify('Pagamento registrato con successo.', 'success');
+    notify('Incasso registrato con successo.', 'success');
     setShowAddModal(false);
     loadData();
   };
@@ -247,8 +250,10 @@ export const FinancialView: React.FC = () => {
                         <td className="p-3 font-mono text-gray-400">#PAY-{p.id.toString().padStart(4, '0')}</td>
                         <td className="p-3 font-semibold text-gray-900">{p.client_name}</td>
                         <td className="p-3">
-                          <span className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded font-mono text-xs">
-                            {p.payment_type}
+                          <span className="px-2 py-0.5 bg-gray-100 text-gray-700 rounded font-semibold text-xs">
+                            {p.payment_type === 'RECURRING' && 'Canone Ricorrente'}
+                            {p.payment_type === 'INSTALLATION' && 'Costo Installazione Una-Tantum'}
+                            {p.payment_type === 'EXTRA' && 'Intervento Tecnico Extra'}
                           </span>
                         </td>
                         <td className="p-3 font-mono font-bold text-gray-900">€ {p.amount.toFixed(2)}</td>
@@ -360,30 +365,6 @@ export const FinancialView: React.FC = () => {
                   onChange={(e) => setNewPayment({ ...newPayment, amount: parseFloat(e.target.value) || 0 })}
                   className="w-full bg-white border border-gray-300 rounded-xl p-3 text-emerald-700 font-mono font-bold"
                 />
-              </div>
-
-              <div>
-                <label className="text-gray-500 block mb-1">Data di Scadenza</label>
-                <input
-                  type="date"
-                  required
-                  value={newPayment.due_date}
-                  onChange={(e) => setNewPayment({ ...newPayment, due_date: e.target.value })}
-                  className="w-full bg-white border border-gray-300 rounded-xl p-3 text-gray-900 font-mono"
-                />
-              </div>
-
-              <div>
-                <label className="text-gray-500 block mb-1">Stato Iniziale</label>
-                <select
-                  value={newPayment.status}
-                  onChange={(e) => setNewPayment({ ...newPayment, status: e.target.value as any })}
-                  className="w-full bg-white border border-gray-300 rounded-xl p-3 text-gray-900"
-                >
-                  <option value="PENDING">In Attesa</option>
-                  <option value="PAID">Saldato Immediatamente</option>
-                  <option value="OVERDUE">Insoluto</option>
-                </select>
               </div>
 
               <div className="flex justify-end gap-2 pt-3">
