@@ -1,7 +1,7 @@
 {
   "name": "WispCore",
   "private": true,
-  "version": "1.0.19",
+  "version": "1.0.20",
   "type": "module",
   "main": "electron/main.js",
   "scripts": {

@@ -82,6 +82,13 @@ function scheduleBackgroundJobs() {
   backup.runDailyBackupIfNeeded();
   setInterval(() => backup.runDailyBackupIfNeeded(), 60 * 60 * 1000);
 
+  // Pagamenti scaduti: flag automatico PENDING -> OVERDUE, controllato
+  // all'avvio e poi ogni ora (non serve più frequente: la data cambia una
+  // volta al giorno, ma un intervallo breve tiene la Dashboard sempre corretta
+  // anche se l'app resta aperta a cavallo di mezzanotte).
+  database.autoFlagOverduePayments();
+  setInterval(() => database.autoFlagOverduePayments(), 60 * 60 * 1000);
+
   // Sync MariaDB multi-sede: quando attiva, sincronizza ad ogni modifica
   // (event-driven, con un breve debounce) e comunque almeno ogni 1 minuto
   // come fallback di sicurezza. Vedi services/sync/scheduler.js.

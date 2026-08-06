@@ -15,13 +15,21 @@ contextBridge.exposeInMainWorld('wispcore', {
   system: {
     getPaths: () => invoke('system:getPaths'),
     getVersion: () => invoke('system:getVersion'),
+    openExternal: (url) => invoke('system:openExternal', url),
   },
   auth: {
     isFirstRun: () => invoke('auth:isFirstRun'),
     registerSuperAdmin: (username, pin) => invoke('auth:registerSuperAdmin', username, pin),
     verifyPin: (pin) => invoke('auth:verifyPin', pin),
+    lockSession: () => invoke('auth:lockSession'),
     getAdminUsername: () => invoke('auth:getAdminUsername'),
     getLockoutState: () => invoke('auth:getLockoutState'),
+  },
+  admins: {
+    list: () => invoke('admins:list'),
+    create: (data) => invoke('admins:create', data),
+    update: (data) => invoke('admins:update', data),
+    delete: (id) => invoke('admins:delete', id),
   },
   clients: {
     list: () => invoke('clients:list'),
@@ -29,6 +37,13 @@ contextBridge.exposeInMainWorld('wispcore', {
     delete: (id) => invoke('clients:delete', id),
     getDetail: (id) => invoke('clients:getDetail', id),
     search: (query, limit) => invoke('clients:search', query, limit),
+    attachContractDocument: (id) => invoke('clients:attachContractDocument', id),
+    openContractDocument: (id) => invoke('clients:openContractDocument', id),
+  },
+  networkNodes: {
+    list: () => invoke('networkNodes:list'),
+    save: (data) => invoke('networkNodes:save', data),
+    delete: (id) => invoke('networkNodes:delete', id),
   },
   collaborators: {
     list: () => invoke('collaborators:list'),
@@ -53,6 +68,7 @@ contextBridge.exposeInMainWorld('wispcore', {
   analytics: {
     monthly: (months) => invoke('analytics:monthly', months),
     topClients: (limit) => invoke('analytics:topClients', limit),
+    bi: (months) => invoke('analytics:bi', months),
   },
   emailTemplates: {
     list: () => invoke('emailTemplates:list'),
@@ -76,6 +92,15 @@ contextBridge.exposeInMainWorld('wispcore', {
     getSecondarySettings: () => invoke('backup:getSecondarySettings'),
     pickSecondaryDir: () => invoke('backup:pickSecondaryDir'),
     setSecondarySettings: (settings) => invoke('backup:setSecondarySettings', settings),
+  },
+  csv: {
+    exportClients: () => invoke('csv:exportClients'),
+    exportPayments: () => invoke('csv:exportPayments'),
+    exportCommissions: () => invoke('csv:exportCommissions'),
+    importClients: () => invoke('csv:importClients'),
+  },
+  report: {
+    generatePeriodPdf: (months) => invoke('report:generatePeriodPdf', months),
   },
   sync: {
     getSettings: () => invoke('sync:getSettings'),

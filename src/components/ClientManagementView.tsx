@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { dbService } from '../dbService';
 import { useToast, useConfirm } from './Toast';
 import { ClientDetailModal } from './ClientDetailModal';
-import type { Client, Collaborator, Plan, BillingCycle } from '../types';
+import type { Client, ClientStatus, Collaborator, NetworkNode, Plan, BillingCycle } from '../types';
+import { BILLING_CYCLE_INFO } from '../types';
 import {
   Users,
   Plus,
@@ -20,11 +21,37 @@ import {
   EyeOff,
   ClipboardList,
   PackageSearch,
-  TrendingUp
+  TrendingUp,
+  MessageCircle,
+  MapPin,
+  Paperclip,
+  FileSignature,
+  Table2,
+  Upload,
+  Filter
 } from 'lucide-react';
 
 interface Props {
   initialSearchQuery?: string;
+}
+
+const STATUS_LABELS: Record<ClientStatus, string> = {
+  ACTIVE: 'Attivo',
+  SUSPENDED: 'Sospeso',
+  CANCELLED: 'Disdetto',
+  PROSPECT: 'Prospect',
+};
+
+const STATUS_BADGE: Record<ClientStatus, string> = {
+  ACTIVE: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  SUSPENDED: 'bg-amber-50 text-amber-700 border-amber-200',
+  CANCELLED: 'bg-gray-100 text-gray-500 border-gray-200',
+  PROSPECT: 'bg-blue-50 text-blue-700 border-blue-200',
+};
+
+/** Numero di telefono ripulito in formato E.164-ish per il link WhatsApp (wa.me vuole solo cifre, senza +/spazi/trattini). */
+function phoneDigitsForWhatsApp(phone: string): string {
+  return phone.replace(/[^\d]/g, '');
 }
 
 export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' }) => {
@@ -33,22 +60,97 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
   const [clients, setClients] = useState<Client[]>([]);
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
+  const [networkNodes, setNetworkNodes] = useState<NetworkNode[]>([]);
   const [search, setSearch] = useState(initialSearchQuery);
+  const [statusFilter, setStatusFilter] = useState<'ALL' | ClientStatus>('ALL');
+  const [planFilter, setPlanFilter] = useState<'ALL' | number>('ALL');
+  const [collaboratorFilter, setCollaboratorFilter] = useState<'ALL' | number>('ALL');
   const [showModal, setShowModal] = useState(false);
   const [editingClient, setEditingClient] = useState<Partial<Client> | null>(null);
   const [visiblePasswordIds, setVisiblePasswordIds] = useState<Set<number>>(new Set());
   const [formPasswordVisible, setFormPasswordVisible] = useState(false);
   const [detailClientId, setDetailClientId] = useState<number | null>(null);
+  const [isAttachingDoc, setIsAttachingDoc] = useState(false);
+  const [isExportingCsv, setIsExportingCsv] = useState(false);
+  const [isImportingCsv, setIsImportingCsv] = useState(false);
 
   useEffect(() => {
     loadData();
   }, []);
 
   const loadData = async () => {
-    const [c, collabs, p] = await Promise.all([dbService.getClients(), dbService.getCollaborators(), dbService.getPlans()]);
+    const [c, collabs, p, nodes] = await Promise.all([
+      dbService.getClients(),
+      dbService.getCollaborators(),
+      dbService.getPlans(),
+      dbService.getNetworkNodes(),
+    ]);
     setClients(c);
     setCollaborators(collabs);
     setPlans(p);
+    setNetworkNodes(nodes);
+  };
+
+  const handleExportCsv = async () => {
+    setIsExportingCsv(true);
+    try {
+      const filePath = await dbService.exportClientsCsv();
+      if (filePath) notify(`Export completato: ${filePath}`, 'success');
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "Errore nell'esportazione.", 'error');
+    } finally {
+      setIsExportingCsv(false);
+    }
+  };
+
+  const handleImportCsv = async () => {
+    setIsImportingCsv(true);
+    try {
+      const result = await dbService.importClientsCsv();
+      if (result) {
+        notify(`Importati ${result.imported} di ${result.total} clienti${result.errors.length ? ` (${result.errors.length} righe con errori)` : ''}.`, result.errors.length ? 'info' : 'success');
+        loadData();
+      }
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "Errore nell'importazione.", 'error');
+    } finally {
+      setIsImportingCsv(false);
+    }
+  };
+
+  const handleWhatsApp = (phone: string) => {
+    const digits = phoneDigitsForWhatsApp(phone);
+    if (!digits) return;
+    dbService.openExternal(`https://wa.me/${digits}`).catch(() => notify('Impossibile aprire WhatsApp.', 'error'));
+  };
+
+  const handleOpenMaps = (address: string) => {
+    dbService.openExternal(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`)
+      .catch(() => notify('Impossibile aprire Google Maps.', 'error'));
+  };
+
+  const handleAttachDocument = async (clientId: number) => {
+    setIsAttachingDoc(true);
+    try {
+      const path = await dbService.attachContractDocument(clientId);
+      if (path) {
+        notify('Documento di contratto allegato.', 'success');
+        loadData();
+        setEditingClient((prev) => (prev ? { ...prev, contract_document_path: path } : prev));
+      }
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "Errore nell'allegare il documento.", 'error');
+    } finally {
+      setIsAttachingDoc(false);
+    }
+  };
+
+  const handleOpenDocument = async (clientId: number) => {
+    try {
+      await dbService.openContractDocument(clientId);
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Impossibile aprire il documento.', 'error');
+    }
   };
 
   const togglePasswordVisibility = (id: number) => {
@@ -67,10 +169,14 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
       address: '',
       phone: '',
       email: '',
+      status: 'ACTIVE',
       billing_cycle: 'MONTHLY',
       monthly_fee: 29.90,
       installation_fee: 100.00,
       collaborator_commission_fee: 0,
+      contract_start_date: '',
+      contract_end_date: '',
+      contract_notes: '',
       pppoe_username: '',
       pppoe_password: '',
       mac_address: '',
@@ -129,6 +235,10 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
   };
 
   const filteredClients = clients.filter(c => {
+    if (statusFilter !== 'ALL' && c.status !== statusFilter) return false;
+    if (planFilter !== 'ALL' && c.plan_id !== planFilter) return false;
+    if (collaboratorFilter !== 'ALL' && c.collaborator_id !== collaboratorFilter) return false;
+
     const query = search.toLowerCase().trim();
     if (!query) return true;
     return (
@@ -152,24 +262,60 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
           <p className="text-gray-500 text-sm mt-1">Configurazione PPPoE, indirizzi IP, MAC Address e contratti di fatturazione</p>
         </div>
 
-        <button
-          onClick={handleOpenNewModal}
-          className="bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white text-sm font-semibold px-4 py-3 rounded-xl shadow-lg shadow-blue-600/20 border border-blue-400/20 flex items-center justify-center gap-2 cursor-pointer transition-all shrink-0"
-        >
-          <Plus size={16} />
-          <span>Nuovo Cliente WISP</span>
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={handleExportCsv}
+            disabled={isExportingCsv}
+            title="Esporta clienti in CSV"
+            className="flex items-center gap-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold px-3 py-3 rounded-xl cursor-pointer transition-colors disabled:opacity-50"
+          >
+            <Table2 size={15} /> <span className="hidden lg:inline">Esporta CSV</span>
+          </button>
+          <button
+            onClick={handleImportCsv}
+            disabled={isImportingCsv}
+            title="Importa clienti da CSV"
+            className="flex items-center gap-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold px-3 py-3 rounded-xl cursor-pointer transition-colors disabled:opacity-50"
+          >
+            <Upload size={15} /> <span className="hidden lg:inline">Importa CSV</span>
+          </button>
+          <button
+            onClick={handleOpenNewModal}
+            className="bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white text-sm font-semibold px-4 py-3 rounded-xl shadow-lg shadow-blue-600/20 border border-blue-400/20 flex items-center justify-center gap-2 cursor-pointer transition-all"
+          >
+            <Plus size={16} />
+            <span>Nuovo Cliente WISP</span>
+          </button>
+        </div>
       </div>
 
-      <div className="relative max-w-md">
-        <Search className="absolute left-3.5 top-3 text-gray-400" size={18} />
-        <input
-          type="text"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Filtra per Nome, IP, MAC Address o Username PPPoE..."
-          className="w-full bg-white border border-gray-300 rounded-xl py-2.5 pl-11 pr-4 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 transition-all font-mono shadow-sm"
-        />
+      <div className="glass-panel rounded-2xl p-4 border border-gray-200 flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-[220px]">
+          <Search className="absolute left-3.5 top-3 text-gray-400" size={18} />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Filtra per Nome, IP, MAC Address o Username PPPoE..."
+            className="w-full bg-white border border-gray-300 rounded-xl py-2.5 pl-11 pr-4 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 transition-all font-mono shadow-sm"
+          />
+        </div>
+        <div className="flex items-center gap-1.5 text-xs text-gray-400"><Filter size={13} /> Filtri:</div>
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as 'ALL' | ClientStatus)}
+          className="bg-white border border-gray-300 rounded-lg p-2 text-xs text-gray-700">
+          <option value="ALL">Tutti gli stati</option>
+          {(Object.keys(STATUS_LABELS) as ClientStatus[]).map((s) => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}
+        </select>
+        <select value={planFilter} onChange={(e) => setPlanFilter(e.target.value === 'ALL' ? 'ALL' : Number(e.target.value))}
+          className="bg-white border border-gray-300 rounded-lg p-2 text-xs text-gray-700">
+          <option value="ALL">Tutti i piani</option>
+          {plans.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+        <select value={collaboratorFilter} onChange={(e) => setCollaboratorFilter(e.target.value === 'ALL' ? 'ALL' : Number(e.target.value))}
+          className="bg-white border border-gray-300 rounded-lg p-2 text-xs text-gray-700">
+          <option value="ALL">Tutti i collaboratori</option>
+          {collaborators.map((c) => <option key={c.id} value={c.id}>{c.first_name} {c.last_name}</option>)}
+        </select>
       </div>
 
       <div className="grid grid-cols-1 gap-4">
@@ -181,7 +327,7 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
           filteredClients.map(client => (
             <div
               key={client.id}
-              className="glass-panel rounded-2xl p-5 border border-gray-200 hover:border-blue-300 transition-all text-sm"
+              className={`glass-panel rounded-2xl p-5 border transition-all text-sm ${client.status === 'CANCELLED' ? 'border-gray-200 opacity-60' : 'border-gray-200 hover:border-blue-300'}`}
             >
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-gray-100">
                 <div className="flex items-center gap-3">
@@ -189,8 +335,11 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
                     {client.first_name[0]}{client.last_name[0]}
                   </div>
                   <div>
-                    <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
+                    <h3 className="text-base font-bold text-gray-900 flex items-center gap-2 flex-wrap">
                       <span>{client.first_name} {client.last_name}</span>
+                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${STATUS_BADGE[client.status]}`}>
+                        {STATUS_LABELS[client.status]}
+                      </span>
                       <span className="text-xs font-mono px-2 py-0.5 bg-gray-100 text-gray-600 rounded border border-gray-200">
                         Cod: WISP-00{client.id}
                       </span>
@@ -199,15 +348,37 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
                           <PackageSearch size={10} /> {client.plan_name}
                         </span>
                       )}
+                      {client.network_node_name && (
+                        <span className="text-xs font-mono px-2 py-0.5 bg-cyan-50 text-cyan-700 rounded border border-cyan-200 flex items-center gap-1">
+                          <Radio size={10} /> {client.network_node_name}
+                        </span>
+                      )}
                     </h3>
-                    <p className="text-gray-500 text-xs mt-0.5">{client.address || 'Indirizzo non inserito'} • CF/PIVA: {client.tax_code || 'N/D'}</p>
+                    <p className="text-gray-500 text-xs mt-0.5 flex items-center gap-2 flex-wrap">
+                      <span>{client.address || 'Indirizzo non inserito'} • CF/PIVA: {client.tax_code || 'N/D'}</span>
+                      {client.address && (
+                        <button onClick={() => handleOpenMaps(client.address!)} className="text-blue-600 hover:text-blue-700 cursor-pointer inline-flex items-center gap-0.5" title="Apri in Google Maps">
+                          <MapPin size={11} />
+                        </button>
+                      )}
+                      {client.phone && (
+                        <button onClick={() => handleWhatsApp(client.phone!)} className="text-emerald-600 hover:text-emerald-700 cursor-pointer inline-flex items-center gap-0.5" title="Scrivi su WhatsApp">
+                          <MessageCircle size={11} />
+                        </button>
+                      )}
+                      {client.contract_document_path && (
+                        <button onClick={() => handleOpenDocument(client.id)} className="text-amber-600 hover:text-amber-700 cursor-pointer inline-flex items-center gap-0.5" title="Apri documento di contratto">
+                          <Paperclip size={11} />
+                        </button>
+                      )}
+                    </p>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-4 bg-gray-50 p-2.5 rounded-xl border border-gray-200 shrink-0">
                   <div>
                     <span className="text-[11px] text-gray-400 uppercase block">Canone Ricorrente</span>
-                    <span className="font-mono font-bold text-sm text-emerald-700">€ {client.monthly_fee.toFixed(2)} / {client.billing_cycle.toLowerCase()}</span>
+                    <span className="font-mono font-bold text-sm text-emerald-700">€ {client.monthly_fee.toFixed(2)} — {BILLING_CYCLE_INFO[client.billing_cycle].label}</span>
                   </div>
                   <div className="border-l border-gray-200 pl-4">
                     <span className="text-[11px] text-gray-400 uppercase block">Installazione</span>
@@ -475,16 +646,19 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
                     </select>
                   </div>
                   <div>
-                    <label className="text-gray-500 mb-1 block">Ciclo di Fatturazione</label>
+                    <label className="text-gray-500 mb-1 block">Ogni Quanto Paga il Cliente</label>
                     <select
                       value={editingClient.billing_cycle || 'MONTHLY'}
                       onChange={(e) => setEditingClient({ ...editingClient, billing_cycle: e.target.value as BillingCycle })}
                       className="w-full bg-white border border-gray-300 rounded-lg p-3 text-gray-900"
                     >
-                      <option value="MONTHLY">Mensile</option>
-                      <option value="ANNUAL">Annuale</option>
-                      <option value="CUSTOM">Personalizzato</option>
+                      {(Object.keys(BILLING_CYCLE_INFO) as BillingCycle[]).map((cycle) => (
+                        <option key={cycle} value={cycle}>{BILLING_CYCLE_INFO[cycle].label}</option>
+                      ))}
                     </select>
+                    <p className="text-[11px] text-gray-400 mt-1">
+                      Determina ogni quanto viene generata in automatico la prossima scadenza quando segni un canone come saldato.
+                    </p>
                   </div>
                   <div>
                     <label className="text-gray-500 mb-1 block">Canone Ricorrente (€)</label>
@@ -553,6 +727,94 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
                       Ogni canone ricorrente pagato dal cliente genererà automaticamente una provvigione di € {Number(editingClient.collaborator_commission_fee).toFixed(2)} per il collaboratore.
                     </p>
                   )}
+                </div>
+              </div>
+
+              <div className="bg-gray-50 p-4 rounded-2xl border border-gray-200 space-y-3">
+                <h4 className="text-xs font-semibold text-purple-700 uppercase tracking-wider flex items-center gap-1">
+                  <FileSignature size={14} /> Stato, Contratto & Localizzazione
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="text-gray-500 mb-1 block">Stato Cliente</label>
+                    <select
+                      value={editingClient.status || 'ACTIVE'}
+                      onChange={(e) => setEditingClient({ ...editingClient, status: e.target.value as ClientStatus })}
+                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-gray-900"
+                    >
+                      {(Object.keys(STATUS_LABELS) as ClientStatus[]).map((s) => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}
+                    </select>
+                  </div>
+                  {editingClient.status === 'CANCELLED' && (
+                    <div className="sm:col-span-2">
+                      <label className="text-gray-500 mb-1 block">Motivo della Disdetta</label>
+                      <input
+                        type="text"
+                        value={editingClient.cancellation_reason || ''}
+                        onChange={(e) => setEditingClient({ ...editingClient, cancellation_reason: e.target.value })}
+                        placeholder="es. Passato alla concorrenza, trasferito, insoddisfatto del servizio..."
+                        className="w-full bg-white border border-gray-300 rounded-lg p-3 text-gray-900"
+                      />
+                    </div>
+                  )}
+                  <div>
+                    <label className="text-gray-500 mb-1 block">Nodo di Rete (BTS/Ripetitore)</label>
+                    <select
+                      value={editingClient.network_node_id || ''}
+                      onChange={(e) => setEditingClient({ ...editingClient, network_node_id: e.target.value ? Number(e.target.value) : null })}
+                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-cyan-700"
+                    >
+                      <option value="">Nessuno / non assegnato</option>
+                      {networkNodes.map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-gray-500 mb-1 block">Inizio Contratto</label>
+                    <input type="date" value={editingClient.contract_start_date || ''} onChange={(e) => setEditingClient({ ...editingClient, contract_start_date: e.target.value })}
+                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-gray-900 font-mono" />
+                  </div>
+                  <div>
+                    <label className="text-gray-500 mb-1 block">Fine Contratto / Rinnovo</label>
+                    <input type="date" value={editingClient.contract_end_date || ''} onChange={(e) => setEditingClient({ ...editingClient, contract_end_date: e.target.value })}
+                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-gray-900 font-mono" />
+                  </div>
+                  <div>
+                    <label className="text-gray-500 mb-1 block">Latitudine</label>
+                    <input type="number" step="any" placeholder="es. 41.9028" value={editingClient.latitude ?? ''}
+                      onChange={(e) => setEditingClient({ ...editingClient, latitude: e.target.value ? Number(e.target.value) : null })}
+                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-gray-900 font-mono" />
+                  </div>
+                  <div>
+                    <label className="text-gray-500 mb-1 block">Longitudine</label>
+                    <input type="number" step="any" placeholder="es. 12.4964" value={editingClient.longitude ?? ''}
+                      onChange={(e) => setEditingClient({ ...editingClient, longitude: e.target.value ? Number(e.target.value) : null })}
+                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-gray-900 font-mono" />
+                  </div>
+                  <p className="sm:col-span-3 text-[11px] text-gray-400 -mt-1">Coordinate usate nella vista "Copertura & Rete". Puoi copiarle da Google Maps (click destro su un punto → "Cosa c'è qui").</p>
+                  <div className="sm:col-span-3">
+                    <label className="text-gray-500 mb-1 block">Note Contrattuali</label>
+                    <textarea value={editingClient.contract_notes || ''} onChange={(e) => setEditingClient({ ...editingClient, contract_notes: e.target.value })} rows={2}
+                      placeholder="Durata minima, penali di recesso, condizioni particolari..."
+                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-gray-900" />
+                  </div>
+                  <div className="sm:col-span-3 flex items-center gap-2">
+                    {editingClient.id ? (
+                      <>
+                        <button type="button" onClick={() => handleAttachDocument(editingClient.id!)} disabled={isAttachingDoc}
+                          className="flex items-center gap-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold px-3 py-2.5 rounded-xl cursor-pointer disabled:opacity-50">
+                          <Paperclip size={13} /> {isAttachingDoc ? 'Caricamento...' : editingClient.contract_document_path ? 'Sostituisci Documento' : 'Allega Documento Contratto'}
+                        </button>
+                        {editingClient.contract_document_path && (
+                          <button type="button" onClick={() => handleOpenDocument(editingClient.id!)}
+                            className="flex items-center gap-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 text-xs font-semibold px-3 py-2.5 rounded-xl cursor-pointer">
+                            <FileText size={13} /> Apri Documento
+                          </button>
+                        )}
+                      </>
+                    ) : (
+                      <p className="text-[11px] text-gray-400">Salva prima il cliente per poter allegare un documento di contratto.</p>
+                    )}
+                  </div>
                 </div>
               </div>
 

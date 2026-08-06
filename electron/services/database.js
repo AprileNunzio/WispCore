@@ -1,8 +1,10 @@
 import fs from 'fs';
+import path from 'path';
 import crypto from 'crypto';
 import { EventEmitter } from 'events';
+import { dialog, shell } from 'electron';
 import initSqlJs from 'sql.js';
-import { ensureDirectories, appendLog } from './paths.js';
+import { ensureDirectories, appendLog, getAppPaths } from './paths.js';
 import { encryptBuffer, decryptBuffer, encryptField, decryptField, getFieldKey } from './crypto.js';
 import { readConfig, updateConfig } from './config.js';
 
@@ -25,7 +27,9 @@ CREATE TABLE IF NOT EXISTS admins (
   username TEXT NOT NULL,
   pin_hash TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT 'SUPER_ADMIN',
-  created_at TEXT NOT NULL
+  linked_collaborator_id INTEGER,
+  created_at TEXT NOT NULL,
+  deleted INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS collaborators (
@@ -56,17 +60,41 @@ CREATE TABLE IF NOT EXISTS plans (
   deleted INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS network_nodes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  uuid TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  latitude REAL,
+  longitude REAL,
+  max_clients INTEGER,
+  notes TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS clients (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   uuid TEXT UNIQUE NOT NULL,
   collaborator_id INTEGER,
   plan_id INTEGER,
+  network_node_id INTEGER,
   first_name TEXT NOT NULL,
   last_name TEXT NOT NULL,
   tax_code TEXT,
   address TEXT,
   phone TEXT,
   email TEXT,
+  status TEXT NOT NULL DEFAULT 'ACTIVE',
+  cancelled_at TEXT,
+  cancellation_reason TEXT,
+  contract_start_date TEXT,
+  contract_end_date TEXT,
+  contract_notes TEXT,
+  contract_document_path TEXT,
+  latitude REAL,
+  longitude REAL,
   billing_cycle TEXT NOT NULL DEFAULT 'MONTHLY',
   monthly_fee REAL NOT NULL DEFAULT 0,
   installation_fee REAL NOT NULL DEFAULT 0,
@@ -83,7 +111,23 @@ CREATE TABLE IF NOT EXISTS clients (
   updated_at TEXT NOT NULL,
   deleted INTEGER NOT NULL DEFAULT 0,
   FOREIGN KEY (collaborator_id) REFERENCES collaborators(id),
-  FOREIGN KEY (plan_id) REFERENCES plans(id)
+  FOREIGN KEY (plan_id) REFERENCES plans(id),
+  FOREIGN KEY (network_node_id) REFERENCES network_nodes(id)
+);
+
+CREATE TABLE IF NOT EXISTS client_plan_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  uuid TEXT UNIQUE NOT NULL,
+  client_id INTEGER NOT NULL,
+  old_plan_id INTEGER,
+  new_plan_id INTEGER,
+  old_plan_name TEXT,
+  new_plan_name TEXT,
+  old_monthly_fee REAL,
+  new_monthly_fee REAL,
+  changed_at TEXT NOT NULL,
+  changed_by TEXT,
+  FOREIGN KEY (client_id) REFERENCES clients(id)
 );
 
 CREATE TABLE IF NOT EXISTS payments (
@@ -162,9 +206,48 @@ function runDefensiveMigrations() {
   if (!clientColumns.includes('next_due_date')) {
     run('ALTER TABLE clients ADD COLUMN next_due_date TEXT');
   }
+  if (!clientColumns.includes('network_node_id')) {
+    run('ALTER TABLE clients ADD COLUMN network_node_id INTEGER');
+  }
+  if (!clientColumns.includes('status')) {
+    run("ALTER TABLE clients ADD COLUMN status TEXT NOT NULL DEFAULT 'ACTIVE'");
+  }
+  if (!clientColumns.includes('cancelled_at')) {
+    run('ALTER TABLE clients ADD COLUMN cancelled_at TEXT');
+  }
+  if (!clientColumns.includes('cancellation_reason')) {
+    run('ALTER TABLE clients ADD COLUMN cancellation_reason TEXT');
+  }
+  if (!clientColumns.includes('contract_start_date')) {
+    run('ALTER TABLE clients ADD COLUMN contract_start_date TEXT');
+  }
+  if (!clientColumns.includes('contract_end_date')) {
+    run('ALTER TABLE clients ADD COLUMN contract_end_date TEXT');
+  }
+  if (!clientColumns.includes('contract_notes')) {
+    run('ALTER TABLE clients ADD COLUMN contract_notes TEXT');
+  }
+  if (!clientColumns.includes('contract_document_path')) {
+    run('ALTER TABLE clients ADD COLUMN contract_document_path TEXT');
+  }
+  if (!clientColumns.includes('latitude')) {
+    run('ALTER TABLE clients ADD COLUMN latitude REAL');
+  }
+  if (!clientColumns.includes('longitude')) {
+    run('ALTER TABLE clients ADD COLUMN longitude REAL');
+  }
+
   const collabColumns = all('PRAGMA table_info(collaborators)').map((c) => c.name);
   if (!collabColumns.includes('default_commission_fee')) {
     run('ALTER TABLE collaborators ADD COLUMN default_commission_fee REAL NOT NULL DEFAULT 0');
+  }
+
+  const adminColumns = all('PRAGMA table_info(admins)').map((c) => c.name);
+  if (!adminColumns.includes('linked_collaborator_id')) {
+    run('ALTER TABLE admins ADD COLUMN linked_collaborator_id INTEGER');
+  }
+  if (!adminColumns.includes('deleted')) {
+    run('ALTER TABLE admins ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0');
   }
 }
 
@@ -283,6 +366,16 @@ function uuid() {
   return crypto.randomUUID();
 }
 
+// Durata in mesi di ogni ciclo di fatturazione, per calcolare la prossima
+// scadenza quando un canone ricorrente viene saldato (vedi updatePaymentStatus).
+const BILLING_CYCLE_MONTHS = { MONTHLY: 1, BIMONTHLY: 2, QUARTERLY: 3, SEMIANNUAL: 6, ANNUAL: 12, CUSTOM: 1 };
+
+function addMonthsToDate(dateStr, months) {
+  const d = new Date(`${dateStr}T00:00:00`);
+  d.setMonth(d.getMonth() + months);
+  return d.toISOString().split('T')[0];
+}
+
 async function getSQL() {
   if (!SQL) SQL = await initSqlJs();
   return SQL;
@@ -382,6 +475,83 @@ export function getAdmin() {
   return get('SELECT * FROM admins ORDER BY id ASC LIMIT 1');
 }
 
+/** Righe complete (incluso pin_hash) usate solo internamente dal flusso di login: mai esposte via IPC. */
+export function listAdminsForAuth() {
+  return all('SELECT * FROM admins WHERE deleted=0 ORDER BY id ASC');
+}
+
+function mapAdmin(row) {
+  return {
+    id: row.id,
+    username: row.username,
+    role: row.role,
+    linked_collaborator_id: row.linked_collaborator_id || null,
+    created_at: row.created_at,
+  };
+}
+
+/** Elenco utenti staff (senza pin_hash) per il pannello Impostazioni → Utenti & Ruoli. */
+export function listAdmins() {
+  return all('SELECT * FROM admins WHERE deleted=0 ORDER BY id ASC').map(mapAdmin);
+}
+
+export function createStaffAdmin({ username, pinHash, role, linkedCollaboratorId }, actor) {
+  run(
+    'INSERT INTO admins (username, pin_hash, role, linked_collaborator_id, created_at, deleted) VALUES (?, ?, ?, ?, ?, 0)',
+    [username, pinHash, role || 'TECNICO', linkedCollaboratorId || null, now()]
+  );
+  const created = get('SELECT * FROM admins WHERE username=? ORDER BY id DESC LIMIT 1', [username]);
+  recordAudit(actor, 'CREATE', 'admin', created.id, { username, role });
+  persist();
+  return mapAdmin(created);
+}
+
+export function updateAdmin(id, { username, role, linkedCollaboratorId, pinHash }, actor) {
+  const existing = get('SELECT * FROM admins WHERE id=?', [id]);
+  if (!existing) throw new Error('Utente non trovato.');
+  if (existing.role === 'SUPER_ADMIN' && role && role !== 'SUPER_ADMIN') {
+    const otherSuperAdmins = get(
+      "SELECT COUNT(*) as n FROM admins WHERE role='SUPER_ADMIN' AND deleted=0 AND id != ?",
+      [id]
+    );
+    if ((otherSuperAdmins?.n || 0) === 0) {
+      throw new Error('Deve rimanere almeno un Super Admin: cambia prima ruolo a un altro utente.');
+    }
+  }
+
+  if (pinHash) {
+    run('UPDATE admins SET username=?, role=?, linked_collaborator_id=?, pin_hash=? WHERE id=?', [
+      username ?? existing.username, role ?? existing.role, linkedCollaboratorId ?? existing.linked_collaborator_id, pinHash, id,
+    ]);
+  } else {
+    run('UPDATE admins SET username=?, role=?, linked_collaborator_id=? WHERE id=?', [
+      username ?? existing.username, role ?? existing.role, linkedCollaboratorId ?? existing.linked_collaborator_id, id,
+    ]);
+  }
+  const updated = get('SELECT * FROM admins WHERE id=?', [id]);
+  recordAudit(actor, 'UPDATE', 'admin', id, { username: updated.username, role: updated.role });
+  persist();
+  return mapAdmin(updated);
+}
+
+export function deleteAdmin(id, actor) {
+  const existing = get('SELECT * FROM admins WHERE id=?', [id]);
+  if (!existing) return false;
+  if (existing.role === 'SUPER_ADMIN') {
+    const otherSuperAdmins = get(
+      "SELECT COUNT(*) as n FROM admins WHERE role='SUPER_ADMIN' AND deleted=0 AND id != ?",
+      [id]
+    );
+    if ((otherSuperAdmins?.n || 0) === 0) {
+      throw new Error('Non puoi eliminare l\'ultimo Super Admin rimasto.');
+    }
+  }
+  run('UPDATE admins SET deleted=1 WHERE id=?', [id]);
+  recordAudit(actor, 'DELETE', 'admin', id, { username: existing.username });
+  persist();
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // Collaborators
 // ---------------------------------------------------------------------------
@@ -425,21 +595,32 @@ export function saveCollaborator(data, actor) {
 // Clients
 // ---------------------------------------------------------------------------
 
-function mapClient(row, collaboratorsById, plansById) {
+function mapClient(row, collaboratorsById, plansById, nodesById) {
   if (!row) return row;
   const coll = collaboratorsById?.get(row.collaborator_id);
   const plan = plansById?.get(row.plan_id);
+  const node = nodesById?.get(row.network_node_id);
   return {
     id: row.id,
     uuid: row.uuid,
     collaborator_id: row.collaborator_id,
     plan_id: row.plan_id,
+    network_node_id: row.network_node_id,
     first_name: row.first_name,
     last_name: row.last_name,
     tax_code: row.tax_code,
     address: row.address,
     phone: row.phone,
     email: row.email,
+    status: row.status || 'ACTIVE',
+    cancelled_at: row.cancelled_at || '',
+    cancellation_reason: row.cancellation_reason || '',
+    contract_start_date: row.contract_start_date || '',
+    contract_end_date: row.contract_end_date || '',
+    contract_notes: row.contract_notes || '',
+    contract_document_path: row.contract_document_path || '',
+    latitude: row.latitude ?? null,
+    longitude: row.longitude ?? null,
     billing_cycle: row.billing_cycle,
     monthly_fee: row.monthly_fee,
     installation_fee: row.installation_fee,
@@ -456,6 +637,7 @@ function mapClient(row, collaboratorsById, plansById) {
     updated_at: row.updated_at,
     collaborator_name: coll ? `${coll.first_name} ${coll.last_name}` : 'Nessuno',
     plan_name: plan ? plan.name : null,
+    network_node_name: node ? node.name : null,
   };
 }
 
@@ -465,9 +647,12 @@ function collaboratorsMap() {
 function plansMap() {
   return new Map(all('SELECT id, name FROM plans').map((p) => [p.id, p]));
 }
+function networkNodesMap() {
+  return new Map(all('SELECT id, name FROM network_nodes').map((n) => [n.id, n]));
+}
 
 export function listClients() {
-  return all('SELECT * FROM clients WHERE deleted = 0 ORDER BY id DESC').map((row) => mapClient(row, collaboratorsMap(), plansMap()));
+  return all('SELECT * FROM clients WHERE deleted = 0 ORDER BY id DESC').map((row) => mapClient(row, collaboratorsMap(), plansMap(), networkNodesMap()));
 }
 
 /**
@@ -489,7 +674,7 @@ export function searchClientsLite(query, limit = 25) {
 export function getClientDetail(id) {
   const row = get('SELECT * FROM clients WHERE id=?', [id]);
   if (!row) return null;
-  const client = mapClient(row, collaboratorsMap(), plansMap());
+  const client = mapClient(row, collaboratorsMap(), plansMap(), networkNodesMap());
   const payments = all('SELECT * FROM payments WHERE client_id=? AND deleted=0 ORDER BY due_date DESC, id DESC', [id]);
   const commissions = all('SELECT * FROM commissions WHERE client_id=? AND deleted=0 ORDER BY id DESC', [id]).map((c) =>
     mapCommission(c, new Map([[id, row]]), collaboratorsMap())
@@ -497,27 +682,72 @@ export function getClientDetail(id) {
   const totalPaid = payments.filter((p) => p.status === 'PAID').reduce((a, b) => a + b.amount, 0);
   const totalOverdue = payments.filter((p) => p.status === 'OVERDUE').reduce((a, b) => a + b.amount, 0);
   const overdueCount = payments.filter((p) => p.status === 'OVERDUE').length;
-  return { client, payments, commissions, stats: { totalPaid, totalOverdue, overdueCount, paymentsCount: payments.length } };
+  const planHistory = listClientPlanHistory(id);
+  return { client, payments, commissions, planHistory, stats: { totalPaid, totalOverdue, overdueCount, paymentsCount: payments.length } };
+}
+
+/** Registra un cambio piano/canone nello storico, se qualcosa è davvero cambiato rispetto alla riga precedente. */
+function recordPlanHistoryIfChanged(before, after, actor) {
+  const planChanged = (before.plan_id || null) !== (after.plan_id || null);
+  const feeChanged = Number(before.monthly_fee || 0) !== Number(after.monthly_fee || 0);
+  if (!planChanged && !feeChanged) return;
+
+  const plans = plansMap();
+  run(
+    `INSERT INTO client_plan_history (uuid, client_id, old_plan_id, new_plan_id, old_plan_name, new_plan_name, old_monthly_fee, new_monthly_fee, changed_at, changed_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      uuid(),
+      after.id,
+      before.plan_id || null,
+      after.plan_id || null,
+      before.plan_id ? plans.get(before.plan_id)?.name || null : null,
+      after.plan_id ? plans.get(after.plan_id)?.name || null : null,
+      Number(before.monthly_fee || 0),
+      Number(after.monthly_fee || 0),
+      now(),
+      actor || 'system',
+    ]
+  );
 }
 
 export function saveClient(data, actor) {
   const encPass = encryptField(data.pppoe_password || '', getFieldKey());
+  const status = data.status || 'ACTIVE';
 
   if (data.id) {
+    const before = get('SELECT * FROM clients WHERE id=?', [data.id]);
+    // La cancellazione è "una tantum": una volta valorizzata cancelled_at non
+    // la si sovrascrive più finché il cliente resta CANCELLED, cosi lo
+    // storico riporta la prima data reale di disdetta.
+    const cancelledAt = status === 'CANCELLED' ? (before?.cancelled_at || now()) : null;
+
     run(
-      `UPDATE clients SET collaborator_id=?, plan_id=?, first_name=?, last_name=?, tax_code=?, address=?, phone=?, email=?,
+      `UPDATE clients SET collaborator_id=?, plan_id=?, network_node_id=?, first_name=?, last_name=?, tax_code=?, address=?, phone=?, email=?,
+       status=?, cancelled_at=?, cancellation_reason=?, contract_start_date=?, contract_end_date=?, contract_notes=?, contract_document_path=?,
+       latitude=?, longitude=?,
        billing_cycle=?, monthly_fee=?, installation_fee=?, collaborator_commission_fee=?, last_payment_date=?, next_due_date=?,
        pppoe_username=?, pppoe_password_enc=?, mac_address=?,
        assigned_ip=?, device_model=?, notes=?, updated_at=? WHERE id=?`,
       [
         data.collaborator_id || null,
         data.plan_id || null,
+        data.network_node_id || null,
         data.first_name,
         data.last_name,
         data.tax_code || '',
         data.address || '',
         data.phone || '',
         data.email || '',
+        status,
+        cancelledAt,
+        status === 'CANCELLED' ? (data.cancellation_reason || '') : null,
+        data.contract_start_date || '',
+        data.contract_end_date || '',
+        data.contract_notes || '',
+        data.contract_document_path ?? before?.contract_document_path ?? '',
+        data.latitude === '' || data.latitude === undefined ? null : Number(data.latitude),
+        data.longitude === '' || data.longitude === undefined ? null : Number(data.longitude),
         data.billing_cycle || 'MONTHLY',
         Number(data.monthly_fee) || 0,
         Number(data.installation_fee) || 0,
@@ -535,30 +765,39 @@ export function saveClient(data, actor) {
       ]
     );
     const updated = get('SELECT * FROM clients WHERE id=?', [data.id]);
+    if (before) recordPlanHistoryIfChanged(before, updated, actor);
     recordOutbox('clients', updated.uuid, 'upsert', { ...updated, pppoe_password_enc: undefined });
     recordAudit(actor, 'UPDATE', 'client', data.id, { first_name: data.first_name, last_name: data.last_name });
     persist();
-    return mapClient(updated, collaboratorsMap(), plansMap());
+    return mapClient(updated, collaboratorsMap(), plansMap(), networkNodesMap());
   }
 
   const rowUuid = uuid();
   const ts = now();
   run(
-    `INSERT INTO clients (uuid, collaborator_id, plan_id, first_name, last_name, tax_code, address, phone, email,
+    `INSERT INTO clients (uuid, collaborator_id, plan_id, network_node_id, first_name, last_name, tax_code, address, phone, email,
+     status, contract_start_date, contract_end_date, contract_notes, latitude, longitude,
      billing_cycle, monthly_fee, installation_fee, collaborator_commission_fee, last_payment_date, next_due_date,
      pppoe_username, pppoe_password_enc, mac_address, assigned_ip,
      device_model, notes, created_at, updated_at, deleted)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
     [
       rowUuid,
       data.collaborator_id || null,
       data.plan_id || null,
+      data.network_node_id || null,
       data.first_name,
       data.last_name,
       data.tax_code || '',
       data.address || '',
       data.phone || '',
       data.email || '',
+      status,
+      data.contract_start_date || '',
+      data.contract_end_date || '',
+      data.contract_notes || '',
+      data.latitude === '' || data.latitude === undefined ? null : Number(data.latitude),
+      data.longitude === '' || data.longitude === undefined ? null : Number(data.longitude),
       data.billing_cycle || 'MONTHLY',
       Number(data.monthly_fee) || 0,
       Number(data.installation_fee) || 0,
@@ -606,7 +845,7 @@ export function saveClient(data, actor) {
   }
 
   persist();
-  return mapClient(get('SELECT * FROM clients WHERE id=?', [created.id]), collaboratorsMap(), plansMap());
+  return mapClient(get('SELECT * FROM clients WHERE id=?', [created.id]), collaboratorsMap(), plansMap(), networkNodesMap());
 }
 
 export function deleteClient(id, actor) {
@@ -666,7 +905,32 @@ export function addPayment(data, actor) {
   return mapPayment(created, clients);
 }
 
+/**
+ * Transizione automatica PENDING -> OVERDUE per i pagamenti la cui scadenza
+ * è passata. Va chiamata all'avvio e periodicamente (main.js): senza questo
+ * job un pagamento scaduto resterebbe "in attesa" finché qualcuno non lo
+ * segna manualmente, falsando Dashboard e Scadenzario.
+ */
+export function autoFlagOverduePayments(actor = 'system') {
+  const today = now().split('T')[0];
+  const toFlag = all(
+    "SELECT id FROM payments WHERE status='PENDING' AND due_date IS NOT NULL AND due_date != '' AND due_date < ? AND deleted=0",
+    [today]
+  );
+  for (const row of toFlag) {
+    run('UPDATE payments SET status=?, updated_at=? WHERE id=?', ['OVERDUE', now(), row.id]);
+    const updated = get('SELECT * FROM payments WHERE id=?', [row.id]);
+    if (updated) recordOutbox('payments', updated.uuid, 'upsert', updated);
+  }
+  if (toFlag.length > 0) {
+    recordAudit(actor, 'AUTO_OVERDUE', 'payment', null, { count: toFlag.length });
+    persist();
+  }
+  return toFlag.length;
+}
+
 export function updatePaymentStatus(id, status, actor) {
+  const payment = get('SELECT * FROM payments WHERE id=?', [id]);
   const paymentDate = status === 'PAID' ? now().split('T')[0] : undefined;
   if (paymentDate) {
     run('UPDATE payments SET status=?, payment_date=?, updated_at=? WHERE id=?', [status, paymentDate, now(), id]);
@@ -676,7 +940,39 @@ export function updatePaymentStatus(id, status, actor) {
   const updated = get('SELECT * FROM payments WHERE id=?', [id]);
   if (updated) recordOutbox('payments', updated.uuid, 'upsert', updated);
   recordAudit(actor, 'UPDATE', 'payment', id, { status });
+
+  // Rinnovo automatico: quando un canone RICORRENTE viene segnato come
+  // saldato, la prossima scadenza si calcola da sola in base al ciclo di
+  // fatturazione del cliente (mensile, ogni 2/3/6 mesi, annuale...) e il
+  // prossimo pagamento PENDING viene già preparato nello Scadenzario, senza
+  // doverlo reinserire a mano ogni volta.
+  let nextDueDate = null;
+  if (status === 'PAID' && payment && payment.payment_type === 'RECURRING') {
+    const client = get('SELECT id, uuid, billing_cycle, monthly_fee FROM clients WHERE id=?', [payment.client_id]);
+    if (client) {
+      const cycleMonths = BILLING_CYCLE_MONTHS[client.billing_cycle] || 1;
+      nextDueDate = addMonthsToDate(paymentDate, cycleMonths);
+
+      run('UPDATE clients SET last_payment_date=?, next_due_date=?, updated_at=? WHERE id=?', [paymentDate, nextDueDate, now(), client.id]);
+      const updatedClient = get('SELECT * FROM clients WHERE id=?', [client.id]);
+      recordOutbox('clients', client.uuid, 'upsert', { ...updatedClient, pppoe_password_enc: undefined });
+
+      // Evita doppioni se esiste già un pendente per quella stessa scadenza.
+      const alreadyExists = get(
+        "SELECT id FROM payments WHERE client_id=? AND payment_type='RECURRING' AND due_date=? AND status='PENDING' AND deleted=0",
+        [client.id, nextDueDate]
+      );
+      if (!alreadyExists) {
+        addPayment(
+          { client_id: client.id, amount: client.monthly_fee, payment_type: 'RECURRING', payment_date: '', due_date: nextDueDate, status: 'PENDING' },
+          actor
+        );
+      }
+    }
+  }
+
   persist();
+  return { nextDueDate };
 }
 
 // ---------------------------------------------------------------------------
@@ -769,6 +1065,118 @@ export function deletePlan(id, actor) {
 }
 
 // ---------------------------------------------------------------------------
+// Network nodes (ripetitori / stazioni base / BTS) e storico piano cliente
+// ---------------------------------------------------------------------------
+
+function mapNetworkNode(row) {
+  if (!row) return row;
+  return { ...row, active: !!row.active };
+}
+
+export function listNetworkNodes() {
+  const nodes = all('SELECT * FROM network_nodes WHERE deleted = 0 ORDER BY name ASC').map(mapNetworkNode);
+  const counts = all(
+    "SELECT network_node_id, COUNT(*) as n FROM clients WHERE deleted=0 AND status != 'CANCELLED' AND network_node_id IS NOT NULL GROUP BY network_node_id"
+  );
+  const countByNode = new Map(counts.map((c) => [c.network_node_id, c.n]));
+  return nodes.map((n) => ({
+    ...n,
+    active_clients: countByNode.get(n.id) || 0,
+    saturation_pct: n.max_clients ? Math.round(((countByNode.get(n.id) || 0) / n.max_clients) * 100) : null,
+  }));
+}
+
+export function saveNetworkNode(data, actor) {
+  if (data.id) {
+    run(
+      `UPDATE network_nodes SET name=?, latitude=?, longitude=?, max_clients=?, notes=?, active=?, updated_at=? WHERE id=?`,
+      [
+        data.name,
+        data.latitude === '' || data.latitude === undefined ? null : Number(data.latitude),
+        data.longitude === '' || data.longitude === undefined ? null : Number(data.longitude),
+        data.max_clients || null,
+        data.notes || '',
+        data.active === false ? 0 : 1,
+        now(),
+        data.id,
+      ]
+    );
+    const updated = get('SELECT * FROM network_nodes WHERE id=?', [data.id]);
+    recordAudit(actor, 'UPDATE', 'network_node', data.id, { name: data.name });
+    persist();
+    return mapNetworkNode(updated);
+  }
+
+  const rowUuid = uuid();
+  const ts = now();
+  run(
+    `INSERT INTO network_nodes (uuid, name, latitude, longitude, max_clients, notes, active, created_at, updated_at, deleted)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+    [
+      rowUuid,
+      data.name,
+      data.latitude === '' || data.latitude === undefined ? null : Number(data.latitude),
+      data.longitude === '' || data.longitude === undefined ? null : Number(data.longitude),
+      data.max_clients || null,
+      data.notes || '',
+      data.active === false ? 0 : 1,
+      ts,
+      ts,
+    ]
+  );
+  const created = get('SELECT * FROM network_nodes WHERE uuid=?', [rowUuid]);
+  recordAudit(actor, 'CREATE', 'network_node', created.id, { name: data.name });
+  persist();
+  return mapNetworkNode(created);
+}
+
+export function deleteNetworkNode(id, actor) {
+  run('UPDATE network_nodes SET deleted=1, updated_at=? WHERE id=?', [now(), id]);
+  recordAudit(actor, 'DELETE', 'network_node', id, null);
+  persist();
+}
+
+/** Storico completo dei cambi piano/canone di un cliente, più recente prima. */
+export function listClientPlanHistory(clientId) {
+  return all('SELECT * FROM client_plan_history WHERE client_id=? ORDER BY id DESC', [clientId]);
+}
+
+/** Apre il selettore file nativo e copia il documento scelto (contratto, allegato) nella cartella dati del cliente. */
+export async function pickAndAttachContractDocument(clientId, browserWindow, actor) {
+  const { canceled, filePaths } = await dialog.showOpenDialog(browserWindow, {
+    title: 'Allega documento di contratto',
+    filters: [{ name: 'Documenti', extensions: ['pdf', 'jpg', 'jpeg', 'png', 'docx', 'doc'] }],
+    properties: ['openFile'],
+  });
+  if (canceled || filePaths.length === 0) return null;
+
+  const client = get('SELECT uuid FROM clients WHERE id=?', [clientId]);
+  if (!client) throw new Error('Cliente non trovato.');
+
+  const destDir = path.join(getAppPaths().contractsDir, client.uuid);
+  if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
+
+  const srcPath = filePaths[0];
+  const destPath = path.join(destDir, path.basename(srcPath));
+  fs.copyFileSync(srcPath, destPath);
+
+  run('UPDATE clients SET contract_document_path=?, updated_at=? WHERE id=?', [destPath, now(), clientId]);
+  recordAudit(actor, 'UPDATE', 'client', clientId, { contract_document: path.basename(destPath) });
+  persist();
+  return destPath;
+}
+
+/** Apre il documento di contratto allegato con l'applicazione predefinita del sistema. */
+export function openContractDocument(clientId) {
+  const client = get('SELECT contract_document_path FROM clients WHERE id=?', [clientId]);
+  if (!client?.contract_document_path || !fs.existsSync(client.contract_document_path)) {
+    throw new Error('Nessun documento allegato, o il file non è più presente sul disco.');
+  }
+  shell.openPath(client.contract_document_path);
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // Email templates
 // ---------------------------------------------------------------------------
 
@@ -838,6 +1246,86 @@ export function getMonthlyAnalytics(months = 12) {
     });
   }
   return series;
+}
+
+/**
+ * Metriche di Business Intelligence per la crescita/gestione del WISP:
+ * Churn Rate mensile (con motivazioni di disdetta), ARPU, LTV stimato e
+ * saturazione per nodo di rete (BTS/ripetitore).
+ */
+export function getBiMetrics(months = 12) {
+  const activeClients = all("SELECT id, monthly_fee, created_at FROM clients WHERE deleted=0 AND status='ACTIVE'");
+  const activeCount = activeClients.length;
+  const mrr = activeClients.reduce((a, b) => a + (Number(b.monthly_fee) || 0), 0);
+  const arpu = activeCount ? mrr / activeCount : 0;
+
+  const today = new Date();
+  const churnSeries = [];
+  for (let i = months - 1; i >= 0; i--) {
+    const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+    const monthStart = d.toISOString().slice(0, 7);
+    const nextMonth = new Date(today.getFullYear(), today.getMonth() - i + 1, 1).toISOString().slice(0, 7);
+
+    // Base clienti "attivi a inizio mese": creati prima dell'inizio del mese
+    // e non ancora disdetti a quella data (o mai disdetti).
+    const startingBase = get(
+      "SELECT COUNT(*) as n FROM clients WHERE deleted=0 AND created_at < ? AND (cancelled_at IS NULL OR cancelled_at = '' OR cancelled_at >= ?)",
+      [monthStart, monthStart]
+    )?.n || 0;
+    const cancelledInMonth = get(
+      "SELECT COUNT(*) as n FROM clients WHERE deleted=0 AND cancelled_at >= ? AND cancelled_at < ?",
+      [monthStart, nextMonth]
+    )?.n || 0;
+
+    churnSeries.push({
+      month: monthStart,
+      startingBase,
+      cancelled: cancelledInMonth,
+      churnRatePct: startingBase > 0 ? Number(((cancelledInMonth / startingBase) * 100).toFixed(2)) : 0,
+    });
+  }
+
+  const avgMonthlyChurnPct = churnSeries.length
+    ? churnSeries.reduce((a, b) => a + b.churnRatePct, 0) / churnSeries.length
+    : 0;
+
+  // LTV stimato con la formula SaaS semplificata LTV = ARPU / tasso di
+  // abbandono mensile. Senza disdette nel periodo (tasso 0) si userebbe una
+  // divisione per zero: come fallback si stima con ARPU * durata media (in
+  // mesi) dei clienti attivi, un proxy ragionevole della "vita" del cliente.
+  let ltv;
+  let ltvMethod;
+  if (avgMonthlyChurnPct > 0) {
+    ltv = arpu / (avgMonthlyChurnPct / 100);
+    ltvMethod = 'ARPU / churn rate mensile';
+  } else {
+    const avgTenureMonths = activeClients.length
+      ? activeClients.reduce((sum, c) => {
+          const created = new Date(c.created_at);
+          const tenureMonths = Math.max(0, (today.getFullYear() - created.getFullYear()) * 12 + (today.getMonth() - created.getMonth()));
+          return sum + tenureMonths;
+        }, 0) / activeClients.length
+      : 0;
+    ltv = arpu * Math.max(avgTenureMonths, 1);
+    ltvMethod = 'ARPU × anzianità media clienti (nessuna disdetta nel periodo)';
+  }
+
+  const cancellationReasons = all(
+    `SELECT COALESCE(NULLIF(cancellation_reason, ''), 'Non specificato') as reason, COUNT(*) as count
+     FROM clients WHERE deleted=0 AND status='CANCELLED' GROUP BY reason ORDER BY count DESC`
+  );
+
+  return {
+    activeCount,
+    mrr,
+    arpu,
+    ltv,
+    ltvMethod,
+    avgMonthlyChurnPct: Number(avgMonthlyChurnPct.toFixed(2)),
+    churnSeries,
+    cancellationReasons,
+    nodeSaturation: listNetworkNodes(),
+  };
 }
 
 export function getTopClientsByRevenue(limit = 5) {

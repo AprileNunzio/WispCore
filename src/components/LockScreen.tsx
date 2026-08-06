@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { dbService } from '../dbService';
+import type { Session } from '../types';
 import { Lock, ShieldAlert, ArrowRight, Server, Wifi, Eye, EyeOff, Delete } from 'lucide-react';
 
 interface Props {
-  onUnlock: () => void;
+  onUnlock: (session: Session) => void;
 }
 
 const MAX_VISIBLE_DOTS = 8;
@@ -14,21 +15,19 @@ export const LockScreen: React.FC<Props> = ({ onUnlock }) => {
   const [showPin, setShowPin] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [adminName, setAdminName] = useState('Super Admin');
 
-  useEffect(() => {
-    dbService.getAdminUsername().then(setAdminName).catch(() => {});
-  }, []);
-
+  // Con più utenti/PIN possibili non sappiamo chi sta per accedere finché non
+  // digita il PIN (nessun selettore username): il saluto resta generico e
+  // mostriamo il nome reale solo dopo lo sblocco (vedi topbar in App.tsx).
   const submitPin = async (candidate: string) => {
     if (!candidate || loading) return;
     setLoading(true);
     setError(null);
 
     try {
-      const isValid = await dbService.verifyPin(candidate);
-      if (isValid) {
-        onUnlock();
+      const session = await dbService.verifyPin(candidate);
+      if (session) {
+        onUnlock(session);
       } else {
         const lockout = await dbService.getLockoutState();
         setError(
@@ -75,7 +74,7 @@ export const LockScreen: React.FC<Props> = ({ onUnlock }) => {
 
         <h2 className="text-xl font-extrabold text-gray-900 tracking-tight">WispCore</h2>
         <p className="text-gray-500 text-xs mt-1 flex items-center justify-center gap-1">
-          <Lock size={11} /> Accesso protetto per <span className="text-blue-700 font-semibold">{adminName}</span>
+          <Lock size={11} /> Accesso staff riservato — inserisci il tuo PIN personale
         </p>
 
         <div className="my-5 p-3 bg-blue-50 border border-blue-200 rounded-xl flex items-center gap-3 text-left">

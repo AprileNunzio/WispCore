@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { dbService } from '../dbService';
 import type { Client, Payment, Commission, MonthlyAnalyticsPoint, TopClient, CommissionByCollaborator } from '../types';
+import { BILLING_CYCLE_INFO } from '../types';
 import {
   TrendingUp,
   Users,
@@ -93,7 +94,12 @@ export const DashboardView: React.FC<Props> = ({ onNavigateToClients }) => {
     setByCollaborator(byColl);
   };
 
-  const mrr = clients.reduce((acc, c) => acc + (Number(c.monthly_fee) || 0), 0);
+  // MRR = canone normalizzato al mese in base al ciclo di fatturazione reale
+  // (un cliente che paga 300€ ogni 6 mesi vale 50€/mese di MRR, non 300€) e
+  // solo sui clienti ACTIVE: sospesi/disdetti non generano incasso ricorrente.
+  const mrr = clients
+    .filter((c) => c.status === 'ACTIVE')
+    .reduce((acc, c) => acc + (Number(c.monthly_fee) || 0) / (BILLING_CYCLE_INFO[c.billing_cycle]?.months || 1), 0);
   const totalRevenue = payments
     .filter(p => p.status === 'PAID')
     .reduce((acc, p) => acc + (Number(p.amount) || 0), 0);

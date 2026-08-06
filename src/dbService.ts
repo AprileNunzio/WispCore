@@ -12,6 +12,8 @@ import type {
   EmailTemplate,
   SmtpSettings,
   UpdateEvent,
+  AdminRole,
+  NetworkNode,
 } from './types';
 
 /**
@@ -71,6 +73,7 @@ export const dbService = {
   // ---- System ----
   getAppPaths: () => bridge().system.getPaths(),
   getAppVersion: () => bridge().system.getVersion(),
+  openExternal: (url: string) => bridge().system.openExternal(url),
 
   // ---- Auth / setup ----
   isFirstRun: () => bridge().auth.isFirstRun(),
@@ -82,9 +85,16 @@ export const dbService = {
     await migrateLegacyDataIfPresent();
   },
 
-  verifyPin: (pin: string): Promise<boolean> => bridge().auth.verifyPin(pin),
+  verifyPin: (pin: string) => bridge().auth.verifyPin(pin),
+  lockSession: () => bridge().auth.lockSession(),
   getAdminUsername: (): Promise<string> => bridge().auth.getAdminUsername(),
   getLockoutState: () => bridge().auth.getLockoutState(),
+
+  // ---- Utenti staff & ruoli ----
+  getAdmins: () => bridge().admins.list(),
+  createAdmin: (data: { username: string; pin: string; role: AdminRole; linkedCollaboratorId?: number | null }) => bridge().admins.create(data),
+  updateAdmin: (data: { id: number; username?: string; role?: AdminRole; linkedCollaboratorId?: number | null; pin?: string }) => bridge().admins.update(data),
+  deleteAdmin: (id: number) => bridge().admins.delete(id),
 
   // ---- Clients ----
   getClients: (): Promise<Client[]> => bridge().clients.list(),
@@ -92,6 +102,13 @@ export const dbService = {
   deleteClient: (id: number): Promise<void> => bridge().clients.delete(id),
   getClientDetail: (id: number): Promise<ClientDetail | null> => bridge().clients.getDetail(id),
   searchClients: (query: string, limit?: number): Promise<ClientLite[]> => bridge().clients.search(query, limit),
+  attachContractDocument: (id: number) => bridge().clients.attachContractDocument(id),
+  openContractDocument: (id: number) => bridge().clients.openContractDocument(id),
+
+  // ---- Network nodes (ripetitori/BTS) ----
+  getNetworkNodes: () => bridge().networkNodes.list(),
+  saveNetworkNode: (data: Partial<NetworkNode>) => bridge().networkNodes.save(data),
+  deleteNetworkNode: (id: number) => bridge().networkNodes.delete(id),
 
   // ---- Collaborators ----
   getCollaborators: (): Promise<Collaborator[]> => bridge().collaborators.list(),
@@ -100,7 +117,7 @@ export const dbService = {
   // ---- Payments ----
   getPayments: (): Promise<Payment[]> => bridge().payments.list(),
   addPayment: (data: Omit<Payment, 'id'>): Promise<Payment> => bridge().payments.add(data),
-  updatePaymentStatus: (id: number, status: PaymentStatus): Promise<void> => bridge().payments.updateStatus(id, status),
+  updatePaymentStatus: (id: number, status: PaymentStatus) => bridge().payments.updateStatus(id, status),
 
   // ---- Commissions ----
   getCommissions: (): Promise<Commission[]> => bridge().commissions.list(),
@@ -116,6 +133,7 @@ export const dbService = {
   // ---- Analytics ----
   getMonthlyAnalytics: (months?: number) => bridge().analytics.monthly(months),
   getTopClients: (limit?: number) => bridge().analytics.topClients(limit),
+  getBiMetrics: (months?: number) => bridge().analytics.bi(months),
 
   // ---- Email templates ----
   getEmailTemplates: (): Promise<EmailTemplate[]> => bridge().emailTemplates.list(),
@@ -137,6 +155,13 @@ export const dbService = {
   getSecondaryBackupSettings: () => bridge().backup.getSecondarySettings(),
   pickSecondaryBackupDir: () => bridge().backup.pickSecondaryDir(),
   setSecondaryBackupSettings: (settings: { enabled: boolean; directory?: string | null }) => bridge().backup.setSecondarySettings(settings),
+
+  // ---- Export CSV / import massivo / report PDF ----
+  exportClientsCsv: () => bridge().csv.exportClients(),
+  exportPaymentsCsv: () => bridge().csv.exportPayments(),
+  exportCommissionsCsv: () => bridge().csv.exportCommissions(),
+  importClientsCsv: () => bridge().csv.importClients(),
+  generatePeriodReportPdf: (months?: number) => bridge().report.generatePeriodPdf(months),
 
   // ---- MariaDB multi-site sync ----
   getSyncSettings: (): Promise<SyncSettings> => bridge().sync.getSettings(),

@@ -1,4 +1,4 @@
-import { ipcMain, app } from 'electron';
+import { ipcMain, app, shell } from 'electron';
 import { getAppPaths } from '../services/paths.js';
 import * as database from '../services/database.js';
 import * as auth from '../services/auth.js';
@@ -7,8 +7,13 @@ import * as mariadbSync from '../services/sync/mariadb.js';
 import * as syncScheduler from '../services/sync/scheduler.js';
 import * as email from '../services/email.js';
 import * as updater from '../services/updater.js';
+import * as csv from '../services/csv.js';
+import * as report from '../services/report.js';
 
-const CURRENT_ACTOR = () => database.getAdmin()?.username || 'admin';
+// Con più utenti, l'attore da registrare in audit/outbox è chi ha
+// effettivamente sbloccato la sessione corrente (auth.getCurrentSession),
+// non più genericamente "il primo admin creato".
+const CURRENT_ACTOR = () => auth.getCurrentSession()?.username || database.getAdmin()?.username || 'admin';
 
 function handle(channel, fn) {
   ipcMain.handle(channel, async (_event, ...args) => {
@@ -24,6 +29,15 @@ export function registerIpcHandlers(getWindow) {
   // ---- System ----
   handle('system:getPaths', () => getAppPaths());
   handle('system:getVersion', () => app.getVersion());
+  // Apre link esterni (WhatsApp, Google Maps...) nel browser di sistema,
+  // mai dentro la finestra dell'app. Limitato a http/https per sicurezza:
+  // niente file://, javascript: o altri schemi potenzialmente pericolosi.
+  handle('system:openExternal', (url) => {
+    if (typeof url !== 'string' || !/^https:\/\//i.test(url)) {
+      throw new Error('URL non valido: consentiti solo link https.');
+    }
+    return shell.openExternal(url);
+  });
 
   // ---- Auth ----
   handle('auth:isFirstRun', () => database.isFirstRun());
@@ -39,21 +53,54 @@ export function registerIpcHandlers(getWindow) {
     if (lockout.isLocked) {
       throw new Error(`Troppi tentativi falliti. Riprova dopo le ${new Date(lockout.lockedUntil).toLocaleTimeString('it-IT')}.`);
     }
-    const admin = database.getAdmin();
-    if (!admin) return false;
-    const valid = await auth.verifyPinHash(pin, admin.pin_hash);
-    if (valid) {
-      auth.resetFailedAttempts();
-      database.recordAudit(admin.username, 'LOGIN', 'session', null, null);
-      database.persist();
-    } else {
-      auth.registerFailedAttempt();
+    // Un solo campo PIN per tutti gli utenti (nessun selettore di username):
+    // proviamo l'hash su ogni account finché uno combacia. Con poche decine
+    // di account staff il costo (Argon2id sequenziale) resta accettabile per
+    // una schermata di sblocco.
+    const admins = database.listAdminsForAuth();
+    let matched = null;
+    for (const admin of admins) {
+      const valid = await auth.verifyPinHash(pin, admin.pin_hash);
+      if (valid) { matched = admin; break; }
     }
-    return valid;
+
+    if (matched) {
+      auth.resetFailedAttempts();
+      auth.setCurrentSession(matched);
+      database.recordAudit(matched.username, 'LOGIN', 'session', null, { role: matched.role });
+      database.persist();
+      return {
+        username: matched.username,
+        role: matched.role,
+        linkedCollaboratorId: matched.linked_collaborator_id || null,
+      };
+    }
+
+    auth.registerFailedAttempt();
+    return null;
   });
 
-  handle('auth:getAdminUsername', () => database.getAdmin()?.username || 'Super Admin');
+  handle('auth:lockSession', () => {
+    const session = auth.getCurrentSession();
+    if (session) database.recordAudit(session.username, 'LOGOUT', 'session', null, null);
+    auth.clearCurrentSession();
+    return true;
+  });
+
+  handle('auth:getAdminUsername', () => auth.getCurrentSession()?.username || database.getAdmin()?.username || 'Super Admin');
   handle('auth:getLockoutState', () => auth.getLockoutState());
+
+  // ---- Gestione utenti staff (Impostazioni -> Utenti & Ruoli) ----
+  handle('admins:list', () => database.listAdmins());
+  handle('admins:create', async ({ username, pin, role, linkedCollaboratorId }) => {
+    const pinHash = await auth.hashPin(pin);
+    return database.createStaffAdmin({ username, pinHash, role, linkedCollaboratorId }, CURRENT_ACTOR());
+  });
+  handle('admins:update', async ({ id, username, role, linkedCollaboratorId, pin }) => {
+    const pinHash = pin ? await auth.hashPin(pin) : undefined;
+    return database.updateAdmin(id, { username, role, linkedCollaboratorId, pinHash }, CURRENT_ACTOR());
+  });
+  handle('admins:delete', (id) => database.deleteAdmin(id, CURRENT_ACTOR()));
 
   // ---- Clients ----
   handle('clients:list', () => database.listClients());
@@ -61,6 +108,8 @@ export function registerIpcHandlers(getWindow) {
   handle('clients:delete', (id) => database.deleteClient(id, CURRENT_ACTOR()));
   handle('clients:getDetail', (id) => database.getClientDetail(id));
   handle('clients:search', (query, limit) => database.searchClientsLite(query, limit));
+  handle('clients:attachContractDocument', (id) => database.pickAndAttachContractDocument(id, getWindow(), CURRENT_ACTOR()));
+  handle('clients:openContractDocument', (id) => database.openContractDocument(id));
 
   // ---- Collaborators ----
   handle('collaborators:list', () => database.listCollaborators());
@@ -82,9 +131,15 @@ export function registerIpcHandlers(getWindow) {
   handle('plans:save', (data) => database.savePlan(data, CURRENT_ACTOR()));
   handle('plans:delete', (id) => database.deletePlan(id, CURRENT_ACTOR()));
 
+  // ---- Network nodes (ripetitori/BTS) ----
+  handle('networkNodes:list', () => database.listNetworkNodes());
+  handle('networkNodes:save', (data) => database.saveNetworkNode(data, CURRENT_ACTOR()));
+  handle('networkNodes:delete', (id) => database.deleteNetworkNode(id, CURRENT_ACTOR()));
+
   // ---- Analytics ----
   handle('analytics:monthly', (months) => database.getMonthlyAnalytics(months));
   handle('analytics:topClients', (limit) => database.getTopClientsByRevenue(limit));
+  handle('analytics:bi', (months) => database.getBiMetrics(months));
 
   // ---- Email templates ----
   handle('emailTemplates:list', () => database.listEmailTemplates());
@@ -131,6 +186,13 @@ export function registerIpcHandlers(getWindow) {
   handle('backup:getSecondarySettings', () => backup.getSecondaryBackupSettings());
   handle('backup:pickSecondaryDir', () => backup.pickSecondaryBackupDirectory(getWindow()));
   handle('backup:setSecondarySettings', (settings) => backup.setSecondaryBackupSettings(settings));
+
+  // ---- Export CSV / import massivo / report PDF ----
+  handle('csv:exportClients', () => csv.exportClientsCsv(getWindow()));
+  handle('csv:exportPayments', () => csv.exportPaymentsCsv(getWindow()));
+  handle('csv:exportCommissions', () => csv.exportCommissionsCsv(getWindow()));
+  handle('csv:importClients', () => csv.importClientsCsv(getWindow(), CURRENT_ACTOR()));
+  handle('report:generatePeriodPdf', (months) => report.generatePeriodReportPdf(getWindow(), { months }));
 
   // ---- MariaDB multi-site sync ----
   handle('sync:getSettings', () => mariadbSync.getSyncSettings());

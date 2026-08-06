@@ -54,3 +54,25 @@ export function resetFailedAttempts() {
     c.lockedUntil = null;
   });
 }
+
+// ---------------------------------------------------------------------------
+// Sessione utente corrente (multi-utente): tenuta solo in memoria nel main
+// process, mai persistita. Determina chi è "l'attore" per audit log e
+// registrazioni, e viene restituita al renderer per il gating dei permessi
+// in UI in base al ruolo.
+// ---------------------------------------------------------------------------
+let currentSession = null;
+
+export function setCurrentSession(admin) {
+  currentSession = admin
+    ? { id: admin.id, username: admin.username, role: admin.role, linkedCollaboratorId: admin.linked_collaborator_id || null }
+    : null;
+}
+
+export function getCurrentSession() {
+  return currentSession;
+}
+
+export function clearCurrentSession() {
+  currentSession = null;
+}
