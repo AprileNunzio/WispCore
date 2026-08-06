@@ -55,10 +55,20 @@ function phoneDigitsForWhatsApp(phone: string): string {
 }
 
 /** Somma un numero di mesi a una data "YYYY-MM-DD", usata per proporre la prossima scadenza in base al ciclo di fatturazione. */
+/**
+ * Somma mesi a una data "YYYY-MM-DD" con pura aritmetica su anno/mese/giorno
+ * (stessa logica di electron/services/database.js): nessun oggetto Date
+ * coinvolto nel calcolo del giorno, quindi nessuna dipendenza dal fuso
+ * orario. Clampa il giorno all'ultimo valido del mese di destinazione.
+ */
 function addMonthsToDateStr(dateStr: string, months: number): string {
-  const d = new Date(`${dateStr}T00:00:00`);
-  d.setMonth(d.getMonth() + months);
-  return d.toISOString().split('T')[0];
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const totalMonths = y * 12 + (m - 1) + months;
+  const newYear = Math.floor(totalMonths / 12);
+  const newMonth = totalMonths % 12;
+  const daysInNewMonth = new Date(newYear, newMonth + 1, 0).getDate();
+  const newDay = Math.min(d, daysInNewMonth);
+  return `${newYear}-${String(newMonth + 1).padStart(2, '0')}-${String(newDay).padStart(2, '0')}`;
 }
 
 export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' }) => {
@@ -232,13 +242,12 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
 
   const handleSelectCollaborator = (collabId: number | null) => {
     if (!editingClient) return;
-    // Nessuna proposta automatica: il guadagno va sempre concordato ed
-    // inserito esplicitamente per il singolo cliente, non c'è più un
-    // "default" del collaboratore da precompilare.
+    const collab = collaborators.find(c => c.id === collabId);
     setEditingClient({
       ...editingClient,
       collaborator_id: collabId,
-      collaborator_commission_fee: editingClient.collaborator_commission_fee || 0,
+      collaborator_commission_fee: editingClient.collaborator_commission_fee || collab?.default_commission_fee || 0,
+      collaborator_installation_commission: editingClient.collaborator_installation_commission || collab?.default_installation_commission || 0,
     });
   };
 
@@ -743,9 +752,20 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
                       disabled={!editingClient.collaborator_id}
                     />
                   </div>
-                  {!!editingClient.collaborator_id && !!editingClient.collaborator_commission_fee && (
-                    <p className="sm:col-span-3 text-[11px] text-gray-400">
-                      Ogni canone ricorrente pagato dal cliente genererà automaticamente una provvigione di € {Number(editingClient.collaborator_commission_fee).toFixed(2)} per il collaboratore.
+                  <div>
+                    <label className="text-gray-500 mb-1 block">Provvigione Installazione Una-Tantum (€)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={editingClient.collaborator_installation_commission || 0}
+                      onChange={(e) => setEditingClient({ ...editingClient, collaborator_installation_commission: parseFloat(e.target.value) || 0 })}
+                      className="w-full bg-white border border-gray-300 rounded-lg p-3 text-purple-700 font-mono font-bold"
+                      disabled={!editingClient.collaborator_id}
+                    />
+                  </div>
+                  {!!editingClient.collaborator_id && (
+                    <p className="sm:col-span-2 text-[11px] text-gray-400">
+                      Provvigione Canone: € {Number(editingClient.collaborator_commission_fee || 0).toFixed(2)} | Provvigione Installazione: € {Number(editingClient.collaborator_installation_commission || 0).toFixed(2)} (erogata al saldo).
                     </p>
                   )}
                 </div>

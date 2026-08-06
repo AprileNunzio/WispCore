@@ -7,6 +7,7 @@ import initSqlJs from 'sql.js';
 import { ensureDirectories, appendLog, getAppPaths } from './paths.js';
 import { encryptBuffer, decryptBuffer, encryptField, decryptField, getFieldKey } from './crypto.js';
 import { readConfig, updateConfig } from './config.js';
+import { normalizeMonthlyFee, calculateNextDueDate, getTodayRomeString } from './financialEngine.js';
 
 let SQL = null;
 let db = null;
@@ -150,13 +151,28 @@ CREATE TABLE IF NOT EXISTS commissions (
   uuid TEXT UNIQUE NOT NULL,
   collaborator_id INTEGER NOT NULL,
   client_id INTEGER NOT NULL,
+  payment_id INTEGER,
   amount REAL NOT NULL,
   payout_status TEXT NOT NULL DEFAULT 'PENDING',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   deleted INTEGER NOT NULL DEFAULT 0,
   FOREIGN KEY (collaborator_id) REFERENCES collaborators(id),
-  FOREIGN KEY (client_id) REFERENCES clients(id)
+  FOREIGN KEY (client_id) REFERENCES clients(id),
+  FOREIGN KEY (payment_id) REFERENCES payments(id)
+);
+
+CREATE TABLE IF NOT EXISTS client_installation_splits (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  uuid TEXT UNIQUE NOT NULL,
+  client_id INTEGER NOT NULL,
+  collaborator_id INTEGER NOT NULL,
+  amount REAL NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted INTEGER NOT NULL DEFAULT 0,
+  FOREIGN KEY (client_id) REFERENCES clients(id),
+  FOREIGN KEY (collaborator_id) REFERENCES collaborators(id)
 );
 
 CREATE TABLE IF NOT EXISTS audit_log (
@@ -237,9 +253,16 @@ function runDefensiveMigrations() {
     run('ALTER TABLE clients ADD COLUMN longitude REAL');
   }
 
+  if (!clientColumns.includes('collaborator_installation_commission')) {
+    run('ALTER TABLE clients ADD COLUMN collaborator_installation_commission REAL NOT NULL DEFAULT 0');
+  }
+
   const collabColumns = all('PRAGMA table_info(collaborators)').map((c) => c.name);
   if (!collabColumns.includes('default_commission_fee')) {
     run('ALTER TABLE collaborators ADD COLUMN default_commission_fee REAL NOT NULL DEFAULT 0');
+  }
+  if (!collabColumns.includes('default_installation_commission')) {
+    run('ALTER TABLE collaborators ADD COLUMN default_installation_commission REAL NOT NULL DEFAULT 0');
   }
 
   const adminColumns = all('PRAGMA table_info(admins)').map((c) => c.name);
@@ -248,6 +271,11 @@ function runDefensiveMigrations() {
   }
   if (!adminColumns.includes('deleted')) {
     run('ALTER TABLE admins ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0');
+  }
+
+  const commissionColumns = all('PRAGMA table_info(commissions)').map((c) => c.name);
+  if (!commissionColumns.includes('payment_id')) {
+    run('ALTER TABLE commissions ADD COLUMN payment_id INTEGER');
   }
 }
 
@@ -370,10 +398,46 @@ function uuid() {
 // scadenza quando un canone ricorrente viene saldato (vedi updatePaymentStatus).
 const BILLING_CYCLE_MONTHS = { MONTHLY: 1, BIMONTHLY: 2, QUARTERLY: 3, SEMIANNUAL: 6, ANNUAL: 12, CUSTOM: 1 };
 
+// WispCore è un gestionale per un'attività italiana: scadenze, bucket
+// mensili delle analytics e flag automatici (insoluti, rinnovi) devono
+// ragionare sul calendario di Roma esplicitamente, non su quello - magari
+// diverso o mal configurato - della macchina che esegue l'app. Mai usare
+// `toISOString()` per estrarre una data di calendario: converte in UTC e
+// per un fuso avanti su UTC (Italia, UTC+1/+2) sposta il giorno indietro.
+const APP_TIMEZONE = 'Europe/Rome';
+const ROME_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', { timeZone: APP_TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit' });
+const ROME_MONTH_FORMATTER = new Intl.DateTimeFormat('en-CA', { timeZone: APP_TIMEZONE, year: 'numeric', month: '2-digit' });
+
+/** Data di calendario "YYYY-MM-DD" nel fuso orario di Roma di un dato istante. */
+function localDateString(date = new Date()) {
+  return ROME_DATE_FORMATTER.format(date); // 'en-CA' formatta già come YYYY-MM-DD
+}
+
+/** "YYYY-MM" del mese `monthOffset` mesi prima/dopo `baseDate`, calcolato nel fuso orario di Roma. */
+function localYearMonth(baseDate, monthOffset = 0) {
+  const parts = ROME_MONTH_FORMATTER.formatToParts(baseDate);
+  const year = Number(parts.find((p) => p.type === 'year').value);
+  const month = Number(parts.find((p) => p.type === 'month').value) - 1; // 0-indexed
+  const totalMonths = year * 12 + month + monthOffset;
+  const y = Math.floor(totalMonths / 12);
+  const m = totalMonths % 12;
+  return `${y}-${String(m + 1).padStart(2, '0')}`;
+}
+
+/**
+ * Somma `months` a una data "YYYY-MM-DD" con pura aritmetica su anno/mese/
+ * giorno: nessun oggetto Date coinvolto, quindi nessuna dipendenza dal fuso
+ * orario. Clampa anche il giorno all'ultimo valido del mese di destinazione
+ * (es. 31 gennaio + 1 mese = 28/29 febbraio, non un rollover a marzo).
+ */
 function addMonthsToDate(dateStr, months) {
-  const d = new Date(`${dateStr}T00:00:00`);
-  d.setMonth(d.getMonth() + months);
-  return d.toISOString().split('T')[0];
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const totalMonths = y * 12 + (m - 1) + months;
+  const newYear = Math.floor(totalMonths / 12);
+  const newMonth = totalMonths % 12; // 0-indexed
+  const daysInNewMonth = new Date(newYear, newMonth + 1, 0).getDate();
+  const newDay = Math.min(d, daysInNewMonth);
+  return `${newYear}-${String(newMonth + 1).padStart(2, '0')}-${String(newDay).padStart(2, '0')}`;
 }
 
 async function getSQL() {
@@ -558,7 +622,12 @@ export function deleteAdmin(id, actor) {
 
 function mapCollaborator(row) {
   if (!row) return row;
-  return { ...row, deleted: !!row.deleted };
+  return {
+    ...row,
+    default_commission_fee: Number(row.default_commission_fee) || 0,
+    default_installation_commission: Number(row.default_installation_commission) || 0,
+    deleted: !!row.deleted,
+  };
 }
 
 export function listCollaborators() {
@@ -568,8 +637,17 @@ export function listCollaborators() {
 export function saveCollaborator(data, actor) {
   if (data.id) {
     run(
-      `UPDATE collaborators SET first_name=?, last_name=?, phone=?, email=?, default_commission_fee=?, updated_at=? WHERE id=?`,
-      [data.first_name, data.last_name, data.phone || '', data.email || '', Number(data.default_commission_fee) || 0, now(), data.id]
+      `UPDATE collaborators SET first_name=?, last_name=?, phone=?, email=?, default_commission_fee=?, default_installation_commission=?, updated_at=? WHERE id=?`,
+      [
+        data.first_name,
+        data.last_name,
+        data.phone || '',
+        data.email || '',
+        Number(data.default_commission_fee) || 0,
+        Number(data.default_installation_commission) || 0,
+        now(),
+        data.id,
+      ]
     );
     const updated = get('SELECT * FROM collaborators WHERE id=?', [data.id]);
     recordOutbox('collaborators', updated.uuid, 'upsert', updated);
@@ -581,8 +659,18 @@ export function saveCollaborator(data, actor) {
   const rowUuid = uuid();
   const ts = now();
   run(
-    `INSERT INTO collaborators (uuid, first_name, last_name, phone, email, default_commission_fee, created_at, updated_at, deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`,
-    [rowUuid, data.first_name, data.last_name, data.phone || '', data.email || '', Number(data.default_commission_fee) || 0, ts, ts]
+    `INSERT INTO collaborators (uuid, first_name, last_name, phone, email, default_commission_fee, default_installation_commission, created_at, updated_at, deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+    [
+      rowUuid,
+      data.first_name,
+      data.last_name,
+      data.phone || '',
+      data.email || '',
+      Number(data.default_commission_fee) || 0,
+      Number(data.default_installation_commission) || 0,
+      ts,
+      ts,
+    ]
   );
   const created = get('SELECT * FROM collaborators WHERE uuid=?', [rowUuid]);
   recordOutbox('collaborators', rowUuid, 'upsert', created);
@@ -625,6 +713,7 @@ function mapClient(row, collaboratorsById, plansById, nodesById) {
     monthly_fee: row.monthly_fee,
     installation_fee: row.installation_fee,
     collaborator_commission_fee: row.collaborator_commission_fee || 0,
+    collaborator_installation_commission: row.collaborator_installation_commission || 0,
     last_payment_date: row.last_payment_date || '',
     next_due_date: row.next_due_date || '',
     pppoe_username: row.pppoe_username,
@@ -683,7 +772,8 @@ export function getClientDetail(id) {
   const totalOverdue = payments.filter((p) => p.status === 'OVERDUE').reduce((a, b) => a + b.amount, 0);
   const overdueCount = payments.filter((p) => p.status === 'OVERDUE').length;
   const planHistory = listClientPlanHistory(id);
-  return { client, payments, commissions, planHistory, stats: { totalPaid, totalOverdue, overdueCount, paymentsCount: payments.length } };
+  const installationSplits = listClientInstallationSplits(id);
+  return { client, payments, commissions, planHistory, installationSplits, stats: { totalPaid, totalOverdue, overdueCount, paymentsCount: payments.length } };
 }
 
 /** Registra un cambio piano/canone nello storico, se qualcosa è davvero cambiato rispetto alla riga precedente. */
@@ -726,7 +816,7 @@ export function saveClient(data, actor) {
       `UPDATE clients SET collaborator_id=?, plan_id=?, network_node_id=?, first_name=?, last_name=?, tax_code=?, address=?, phone=?, email=?,
        status=?, cancelled_at=?, cancellation_reason=?, contract_start_date=?, contract_end_date=?, contract_notes=?, contract_document_path=?,
        latitude=?, longitude=?,
-       billing_cycle=?, monthly_fee=?, installation_fee=?, collaborator_commission_fee=?, last_payment_date=?, next_due_date=?,
+       billing_cycle=?, monthly_fee=?, installation_fee=?, collaborator_commission_fee=?, collaborator_installation_commission=?, last_payment_date=?, next_due_date=?,
        pppoe_username=?, pppoe_password_enc=?, mac_address=?,
        assigned_ip=?, device_model=?, notes=?, updated_at=? WHERE id=?`,
       [
@@ -752,6 +842,7 @@ export function saveClient(data, actor) {
         Number(data.monthly_fee) || 0,
         Number(data.installation_fee) || 0,
         Number(data.collaborator_commission_fee) || 0,
+        Number(data.collaborator_installation_commission) || 0,
         data.last_payment_date || '',
         data.next_due_date || '',
         data.pppoe_username || '',
@@ -766,6 +857,11 @@ export function saveClient(data, actor) {
     );
     const updated = get('SELECT * FROM clients WHERE id=?', [data.id]);
     if (before) recordPlanHistoryIfChanged(before, updated, actor);
+    // Solo se il payload la include esplicitamente: un salvataggio parziale
+    // (es. import CSV) non deve azzerare una ripartizione già configurata.
+    if (data.installation_splits !== undefined) {
+      replaceClientInstallationSplits(data.id, data.installation_splits);
+    }
     recordOutbox('clients', updated.uuid, 'upsert', { ...updated, pppoe_password_enc: undefined });
     recordAudit(actor, 'UPDATE', 'client', data.id, { first_name: data.first_name, last_name: data.last_name });
     persist();
@@ -777,10 +873,10 @@ export function saveClient(data, actor) {
   run(
     `INSERT INTO clients (uuid, collaborator_id, plan_id, network_node_id, first_name, last_name, tax_code, address, phone, email,
      status, contract_start_date, contract_end_date, contract_notes, latitude, longitude,
-     billing_cycle, monthly_fee, installation_fee, collaborator_commission_fee, last_payment_date, next_due_date,
+     billing_cycle, monthly_fee, installation_fee, collaborator_commission_fee, collaborator_installation_commission, last_payment_date, next_due_date,
      pppoe_username, pppoe_password_enc, mac_address, assigned_ip,
      device_model, notes, created_at, updated_at, deleted)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
     [
       rowUuid,
       data.collaborator_id || null,
@@ -802,6 +898,7 @@ export function saveClient(data, actor) {
       Number(data.monthly_fee) || 0,
       Number(data.installation_fee) || 0,
       Number(data.collaborator_commission_fee) || 0,
+      Number(data.collaborator_installation_commission) || 0,
       data.last_payment_date || '',
       data.next_due_date || '',
       data.pppoe_username || '',
@@ -818,30 +915,37 @@ export function saveClient(data, actor) {
   recordOutbox('clients', rowUuid, 'upsert', { ...created, pppoe_password_enc: undefined });
   recordAudit(actor, 'CREATE', 'client', created.id, { first_name: data.first_name, last_name: data.last_name });
 
-  if (created.installation_fee > 0) {
-    addPayment(
-      {
-        client_id: created.id,
-        amount: created.installation_fee,
-        payment_type: 'INSTALLATION',
-        payment_date: '',
-        due_date: ts.split('T')[0],
-        status: 'PENDING',
-      },
+  // Ripartizione dell'una tantum di installazione tra i collaboratori scelti
+  // (se presente): salvata subito, così è pronta per generare le rispettive
+  // provvigioni non appena quel pagamento risulterà saldato.
+  replaceClientInstallationSplits(created.id, data.installation_splits || []);
+
+  const todayStr = localDateString();
+
+  // Primo canone ricorrente: nasce "In Attesa" se il piano prevede un
+  // importo. Il flag "il cliente ha già pagato" in fase di attivazione lo
+  // salda subito riusando updatePaymentStatus (stessa logica di rinnovo
+  // automatico e generazione provvigioni degli altri incassi), invece di
+  // duplicarla qui.
+  if (created.monthly_fee > 0) {
+    const firstPayment = addPayment(
+      { client_id: created.id, amount: created.monthly_fee, payment_type: 'RECURRING', payment_date: '', due_date: created.next_due_date || todayStr, status: 'PENDING' },
       actor
     );
+    if (data.already_paid_this_period) {
+      updatePaymentStatus(firstPayment.id, 'PAID', actor);
+    }
   }
 
-  if (created.collaborator_id && created.installation_fee > 0) {
-    addCommission(
-      {
-        collaborator_id: created.collaborator_id,
-        client_id: created.id,
-        amount: Number((created.installation_fee * 0.2).toFixed(2)),
-        payout_status: 'PENDING',
-      },
+  // Una tantum di installazione: stesso schema del canone.
+  if (created.installation_fee > 0) {
+    const installPayment = addPayment(
+      { client_id: created.id, amount: created.installation_fee, payment_type: 'INSTALLATION', payment_date: '', due_date: todayStr, status: 'PENDING' },
       actor
     );
+    if (data.already_paid_installation) {
+      updatePaymentStatus(installPayment.id, 'PAID', actor);
+    }
   }
 
   persist();
@@ -882,23 +986,12 @@ export function addPayment(data, actor) {
   recordOutbox('payments', rowUuid, 'upsert', created);
   recordAudit(actor, 'CREATE', 'payment', created.id, { amount: data.amount, payment_type: data.payment_type });
 
-  // Recurring provvigione: se il cliente ha un collaboratore con una commissione
-  // ricorrente configurata, ogni canone RECURRING genera automaticamente la
-  // provvigione collegata (es. cliente paga 20€/mese, 5€/mese al collaboratore).
-  if (data.payment_type === 'RECURRING') {
-    const client = get('SELECT collaborator_id, collaborator_commission_fee FROM clients WHERE id=?', [data.client_id]);
-    if (client?.collaborator_id && Number(client.collaborator_commission_fee) > 0) {
-      addCommission(
-        {
-          collaborator_id: client.collaborator_id,
-          client_id: data.client_id,
-          amount: Number(client.collaborator_commission_fee),
-          payout_status: 'PENDING',
-        },
-        actor
-      );
-    }
-  }
+  // Le provvigioni (ricorrente o installazione, in base al tipo di pagamento)
+  // scattano SOLO se il pagamento nasce già Saldato - mai su un semplice
+  // "In Attesa": altrimenti si genererebbe un debito verso il collaboratore
+  // prima ancora che il cliente abbia davvero pagato.
+  generateRecurringCommissionIfNeeded(created, actor);
+  generateInstallationCommissionsIfNeeded(created, actor);
 
   persist();
   const clients = new Map(all('SELECT id, first_name, last_name FROM clients').map((c) => [c.id, c]));
@@ -912,7 +1005,7 @@ export function addPayment(data, actor) {
  * segna manualmente, falsando Dashboard e Scadenzario.
  */
 export function autoFlagOverduePayments(actor = 'system') {
-  const today = now().split('T')[0];
+  const today = localDateString();
   const toFlag = all(
     "SELECT id FROM payments WHERE status='PENDING' AND due_date IS NOT NULL AND due_date != '' AND due_date < ? AND deleted=0",
     [today]
@@ -929,9 +1022,9 @@ export function autoFlagOverduePayments(actor = 'system') {
   return toFlag.length;
 }
 
-export function updatePaymentStatus(id, status, actor) {
+export function updatePaymentStatus(id, status, actor, customPaymentDate) {
   const payment = get('SELECT * FROM payments WHERE id=?', [id]);
-  const paymentDate = status === 'PAID' ? now().split('T')[0] : undefined;
+  const paymentDate = status === 'PAID' ? (customPaymentDate || getTodayRomeString()) : undefined;
   if (paymentDate) {
     run('UPDATE payments SET status=?, payment_date=?, updated_at=? WHERE id=?', [status, paymentDate, now(), id]);
   } else {
@@ -939,19 +1032,25 @@ export function updatePaymentStatus(id, status, actor) {
   }
   const updated = get('SELECT * FROM payments WHERE id=?', [id]);
   if (updated) recordOutbox('payments', updated.uuid, 'upsert', updated);
-  recordAudit(actor, 'UPDATE', 'payment', id, { status });
+  recordAudit(actor, 'UPDATE', 'payment', id, { status, payment_date: paymentDate });
+
+  // Provvigioni: se questo pagamento (creato magari come "In Attesa") passa
+  // ora a Saldato, genera la provvigione collegata - ricorrente o di
+  // installazione a seconda del tipo - solo adesso, mai prima.
+  if (updated && status === 'PAID') {
+    generateRecurringCommissionIfNeeded(updated, actor);
+    generateInstallationCommissionsIfNeeded(updated, actor);
+  }
 
   // Rinnovo automatico: quando un canone RICORRENTE viene segnato come
-  // saldato, la prossima scadenza si calcola da sola in base al ciclo di
-  // fatturazione del cliente (mensile, ogni 2/3/6 mesi, annuale...) e il
-  // prossimo pagamento PENDING viene già preparato nello Scadenzario, senza
-  // doverlo reinserire a mano ogni volta.
+  // saldato, la prossima scadenza si calcola dalla VECCHIA SCADENZA in base
+  // al ciclo di fatturazione del cliente (mensile, ogni 2/3/6 mesi, annuale...)
+  // evitando di regalare giorni di servizio per pagamenti tardivi.
   let nextDueDate = null;
   if (status === 'PAID' && payment && payment.payment_type === 'RECURRING') {
     const client = get('SELECT id, uuid, billing_cycle, monthly_fee FROM clients WHERE id=?', [payment.client_id]);
     if (client) {
-      const cycleMonths = BILLING_CYCLE_MONTHS[client.billing_cycle] || 1;
-      nextDueDate = addMonthsToDate(paymentDate, cycleMonths);
+      nextDueDate = calculateNextDueDate(payment.due_date || paymentDate, client.billing_cycle);
 
       run('UPDATE clients SET last_payment_date=?, next_due_date=?, updated_at=? WHERE id=?', [paymentDate, nextDueDate, now(), client.id]);
       const updatedClient = get('SELECT * FROM clients WHERE id=?', [client.id]);
@@ -999,9 +1098,9 @@ export function addCommission(data, actor) {
   const rowUuid = uuid();
   const ts = now();
   run(
-    `INSERT INTO commissions (uuid, collaborator_id, client_id, amount, payout_status, created_at, updated_at, deleted)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 0)`,
-    [rowUuid, data.collaborator_id, data.client_id, data.amount, data.payout_status || 'PENDING', ts, ts]
+    `INSERT INTO commissions (uuid, collaborator_id, client_id, payment_id, amount, payout_status, created_at, updated_at, deleted)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+    [rowUuid, data.collaborator_id, data.client_id, data.payment_id || null, data.amount, data.payout_status || 'PENDING', ts, ts]
   );
   const created = get('SELECT * FROM commissions WHERE uuid=?', [rowUuid]);
   recordOutbox('commissions', rowUuid, 'upsert', created);
@@ -1012,12 +1111,89 @@ export function addCommission(data, actor) {
   return mapCommission(created, clients, collaborators);
 }
 
+/** true se esiste già una provvigione (non cancellata) generata per quello specifico pagamento — evita doppioni se lo stato viene alternato PAID/PENDING più volte. */
+function hasCommissionForPayment(paymentId) {
+  return !!get('SELECT id FROM commissions WHERE payment_id=? AND deleted=0', [paymentId]);
+}
+
 export function updateCommissionStatus(id, status, actor) {
   run('UPDATE commissions SET payout_status=?, updated_at=? WHERE id=?', [status, now(), id]);
   const updated = get('SELECT * FROM commissions WHERE id=?', [id]);
   if (updated) recordOutbox('commissions', updated.uuid, 'upsert', updated);
   recordAudit(actor, 'UPDATE', 'commission', id, { status });
   persist();
+}
+
+/** Elimina (soft) una provvigione generata per errore. */
+export function deleteCommission(id, actor) {
+  const row = get('SELECT uuid FROM commissions WHERE id=?', [id]);
+  run('UPDATE commissions SET deleted=1, updated_at=? WHERE id=?', [now(), id]);
+  if (row) recordOutbox('commissions', row.uuid, 'delete', { uuid: row.uuid });
+  recordAudit(actor, 'DELETE', 'commission', id, null);
+  persist();
+}
+
+// ---------------------------------------------------------------------------
+// Ripartizione provvigione installazione (client_installation_splits)
+// ---------------------------------------------------------------------------
+
+/** Ripartizione configurata (chi prende quanto dell'una tantum di installazione), indipendentemente dal fatto che sia già stata pagata. */
+export function listClientInstallationSplits(clientId) {
+  const collaborators = new Map(all('SELECT id, first_name, last_name FROM collaborators').map((c) => [c.id, c]));
+  return all('SELECT * FROM client_installation_splits WHERE client_id=? AND deleted=0 ORDER BY id ASC', [clientId]).map((row) => ({
+    ...row,
+    collaborator_name: collaborators.get(row.collaborator_id)
+      ? `${collaborators.get(row.collaborator_id).first_name} ${collaborators.get(row.collaborator_id).last_name}`
+      : 'Collaboratore sconosciuto',
+  }));
+}
+
+/** Sostituisce interamente la ripartizione di un cliente (cancella le righe precedenti e reinserisce quelle correnti). */
+function replaceClientInstallationSplits(clientId, splits) {
+  run('UPDATE client_installation_splits SET deleted=1, updated_at=? WHERE client_id=? AND deleted=0', [now(), clientId]);
+  for (const split of splits || []) {
+    if (!split.collaborator_id || !(Number(split.amount) > 0)) continue;
+    const ts = now();
+    run(
+      `INSERT INTO client_installation_splits (uuid, client_id, collaborator_id, amount, created_at, updated_at, deleted)
+       VALUES (?, ?, ?, ?, ?, ?, 0)`,
+      [uuid(), clientId, split.collaborator_id, Number(split.amount), ts, ts]
+    );
+  }
+}
+
+/**
+ * Genera le provvigioni di installazione dalla ripartizione configurata,
+ * quando il relativo pagamento INSTALLATION risulta saldato. Idempotente:
+ * se per questo pagamento sono già state generate, non duplica.
+ */
+function generateInstallationCommissionsIfNeeded(payment, actor) {
+  if (payment.payment_type !== 'INSTALLATION' || payment.status !== 'PAID') return;
+  if (hasCommissionForPayment(payment.id)) return;
+  const splits = all('SELECT * FROM client_installation_splits WHERE client_id=? AND deleted=0', [payment.client_id]);
+  for (const split of splits) {
+    addCommission(
+      { collaborator_id: split.collaborator_id, client_id: payment.client_id, payment_id: payment.id, amount: split.amount, payout_status: 'PENDING' },
+      actor
+    );
+  }
+}
+
+/**
+ * Genera la provvigione ricorrente dal compenso per-cliente configurato,
+ * quando il relativo pagamento RECURRING risulta saldato. Idempotente:
+ * se per questo pagamento è già stata generata, non duplica.
+ */
+function generateRecurringCommissionIfNeeded(payment, actor) {
+  if (payment.payment_type !== 'RECURRING' || payment.status !== 'PAID') return;
+  if (hasCommissionForPayment(payment.id)) return;
+  const client = get('SELECT collaborator_id, collaborator_commission_fee FROM clients WHERE id=?', [payment.client_id]);
+  if (client?.collaborator_id && Number(client.collaborator_commission_fee) > 0) {
+    addCommission(
+      { collaborator_id: client.collaborator_id, client_id: payment.client_id, payment_id: payment.id, amount: Number(client.collaborator_commission_fee), payout_status: 'PENDING' },
+      actor
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1216,9 +1392,8 @@ export function getMonthlyAnalytics(months = 12) {
   const series = [];
   const today = new Date();
   for (let i = months - 1; i >= 0; i--) {
-    const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
-    const monthStart = d.toISOString().slice(0, 7); // YYYY-MM
-    const nextMonth = new Date(today.getFullYear(), today.getMonth() - i + 1, 1).toISOString().slice(0, 7);
+    const monthStart = localYearMonth(today, -i); // YYYY-MM
+    const nextMonth = localYearMonth(today, -i + 1);
 
     const revenueRow = get(
       "SELECT COALESCE(SUM(amount),0) as total FROM payments WHERE status='PAID' AND payment_date >= ? AND payment_date < ? AND deleted=0",
@@ -1254,17 +1429,16 @@ export function getMonthlyAnalytics(months = 12) {
  * saturazione per nodo di rete (BTS/ripetitore).
  */
 export function getBiMetrics(months = 12) {
-  const activeClients = all("SELECT id, monthly_fee, created_at FROM clients WHERE deleted=0 AND status='ACTIVE'");
+  const activeClients = all("SELECT id, monthly_fee, billing_cycle, created_at FROM clients WHERE deleted=0 AND status='ACTIVE'");
   const activeCount = activeClients.length;
-  const mrr = activeClients.reduce((a, b) => a + (Number(b.monthly_fee) || 0), 0);
+  const mrr = activeClients.reduce((a, b) => a + normalizeMonthlyFee(b.monthly_fee, b.billing_cycle), 0);
   const arpu = activeCount ? mrr / activeCount : 0;
 
   const today = new Date();
   const churnSeries = [];
   for (let i = months - 1; i >= 0; i--) {
-    const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
-    const monthStart = d.toISOString().slice(0, 7);
-    const nextMonth = new Date(today.getFullYear(), today.getMonth() - i + 1, 1).toISOString().slice(0, 7);
+    const monthStart = localYearMonth(today, -i);
+    const nextMonth = localYearMonth(today, -i + 1);
 
     // Base clienti "attivi a inizio mese": creati prima dell'inizio del mese
     // e non ancora disdetti a quella data (o mai disdetti).

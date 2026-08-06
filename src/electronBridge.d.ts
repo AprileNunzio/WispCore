@@ -2,6 +2,8 @@ import type {
   Client,
   ClientLite,
   ClientDetail,
+  ClientSavePayload,
+  ClientInstallationSplit,
   Collaborator,
   Payment,
   Commission,
@@ -52,12 +54,13 @@ export interface WispCoreBridge {
   };
   clients: {
     list: () => Promise<Client[]>;
-    save: (data: Partial<Client>) => Promise<Client>;
+    save: (data: ClientSavePayload) => Promise<Client>;
     delete: (id: number) => Promise<void>;
     getDetail: (id: number) => Promise<ClientDetail | null>;
     search: (query: string, limit?: number) => Promise<ClientLite[]>;
     attachContractDocument: (id: number) => Promise<string | null>;
     openContractDocument: (id: number) => Promise<boolean>;
+    getInstallationSplits: (id: number) => Promise<ClientInstallationSplit[]>;
   };
   networkNodes: {
     list: () => Promise<NetworkNode[]>;
@@ -71,12 +74,13 @@ export interface WispCoreBridge {
   payments: {
     list: () => Promise<Payment[]>;
     add: (data: Omit<Payment, 'id'>) => Promise<Payment>;
-    updateStatus: (id: number, status: PaymentStatus) => Promise<{ nextDueDate: string | null }>;
+    updateStatus: (id: number, status: PaymentStatus, paymentDate?: string) => Promise<{ nextDueDate: string | null }>;
   };
   commissions: {
     list: () => Promise<Commission[]>;
     add: (data: Omit<Commission, 'id' | 'created_at'>) => Promise<Commission>;
     updateStatus: (id: number, status: PayoutStatus) => Promise<void>;
+    delete: (id: number) => Promise<void>;
     byCollaborator: () => Promise<CommissionByCollaborator[]>;
   };
   plans: {

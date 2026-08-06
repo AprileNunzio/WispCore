@@ -13,6 +13,7 @@ export interface Collaborator {
   phone?: string;
   email?: string;
   default_commission_fee?: number;
+  default_installation_commission?: number;
   created_at: string;
   updated_at?: string;
 }
@@ -55,6 +56,7 @@ export interface Client {
   monthly_fee: number;
   installation_fee: number;
   collaborator_commission_fee?: number;
+  collaborator_installation_commission?: number;
   last_payment_date?: string;
   next_due_date?: string;
   pppoe_username?: string;
@@ -135,6 +137,7 @@ export interface Payment {
   payment_date: string;
   due_date: string;
   status: PaymentStatus;
+  deleted?: boolean | number;
   // Joined fields
   client_name?: string;
 }
@@ -146,12 +149,21 @@ export interface Commission {
   uuid?: string;
   collaborator_id: number;
   client_id: number;
+  payment_id?: number | null;
   amount: number;
   payout_status: PayoutStatus;
   created_at: string;
   // Joined fields
   collaborator_name?: string;
   client_name?: string;
+}
+
+export interface ClientInstallationSplit {
+  id: number;
+  client_id: number;
+  collaborator_id: number;
+  amount: number;
+  collaborator_name?: string;
 }
 
 export interface AppConfig {
@@ -311,11 +323,23 @@ export interface CommissionByCollaborator {
   total_amount: number;
 }
 
+/**
+ * Payload di salvataggio cliente: i campi extra sono istruzioni valide solo
+ * in fase di creazione (ripartizione installazione, flag "già pagato"), non
+ * fanno parte dell'entità Client persistita così come restituita dalle liste.
+ */
+export interface ClientSavePayload extends Partial<Client> {
+  installation_splits?: { collaborator_id: number; amount: number }[];
+  already_paid_this_period?: boolean;
+  already_paid_installation?: boolean;
+}
+
 export interface ClientDetail {
   client: Client;
   payments: Payment[];
   commissions: Commission[];
   planHistory: ClientPlanHistoryEntry[];
+  installationSplits: ClientInstallationSplit[];
   stats: { totalPaid: number; totalOverdue: number; overdueCount: number; paymentsCount: number };
 }
 

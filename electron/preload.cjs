@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld('wispcore', {
     search: (query, limit) => invoke('clients:search', query, limit),
     attachContractDocument: (id) => invoke('clients:attachContractDocument', id),
     openContractDocument: (id) => invoke('clients:openContractDocument', id),
+    getInstallationSplits: (id) => invoke('clients:getInstallationSplits', id),
   },
   networkNodes: {
     list: () => invoke('networkNodes:list'),
@@ -58,6 +59,7 @@ contextBridge.exposeInMainWorld('wispcore', {
     list: () => invoke('commissions:list'),
     add: (data) => invoke('commissions:add', data),
     updateStatus: (id, status) => invoke('commissions:updateStatus', id, status),
+    delete: (id) => invoke('commissions:delete', id),
     byCollaborator: () => invoke('commissions:byCollaborator'),
   },
   plans: {

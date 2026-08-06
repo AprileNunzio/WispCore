@@ -263,6 +263,28 @@ export const CollaboratorsView: React.FC = () => {
                   className="w-full bg-white border border-gray-300 rounded-xl p-2.5 text-gray-900"
                 />
               </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-gray-500 block mb-1">Canone Default (€/m)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={form.default_commission_fee || 0}
+                    onChange={(e) => setForm({ ...form, default_commission_fee: parseFloat(e.target.value) || 0 })}
+                    className="w-full bg-white border border-gray-300 rounded-xl p-2.5 text-cyan-700 font-mono font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="text-gray-500 block mb-1">Install. Default (€)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={form.default_installation_commission || 0}
+                    onChange={(e) => setForm({ ...form, default_installation_commission: parseFloat(e.target.value) || 0 })}
+                    className="w-full bg-white border border-gray-300 rounded-xl p-2.5 text-purple-700 font-mono font-bold"
+                  />
+                </div>
+              </div>
               <div className="flex justify-end gap-2 pt-3">
                 <button
                   type="button"

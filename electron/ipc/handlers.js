@@ -110,6 +110,7 @@ export function registerIpcHandlers(getWindow) {
   handle('clients:search', (query, limit) => database.searchClientsLite(query, limit));
   handle('clients:attachContractDocument', (id) => database.pickAndAttachContractDocument(id, getWindow(), CURRENT_ACTOR()));
   handle('clients:openContractDocument', (id) => database.openContractDocument(id));
+  handle('clients:getInstallationSplits', (id) => database.listClientInstallationSplits(id));
 
   // ---- Collaborators ----
   handle('collaborators:list', () => database.listCollaborators());
@@ -118,12 +119,13 @@ export function registerIpcHandlers(getWindow) {
   // ---- Payments ----
   handle('payments:list', () => database.listPayments());
   handle('payments:add', (data) => database.addPayment(data, CURRENT_ACTOR()));
-  handle('payments:updateStatus', (id, status) => database.updatePaymentStatus(id, status, CURRENT_ACTOR()));
+  handle('payments:updateStatus', (id, status, paymentDate) => database.updatePaymentStatus(id, status, CURRENT_ACTOR(), paymentDate));
 
   // ---- Commissions ----
   handle('commissions:list', () => database.listCommissions());
   handle('commissions:add', (data) => database.addCommission(data, CURRENT_ACTOR()));
   handle('commissions:updateStatus', (id, status) => database.updateCommissionStatus(id, status, CURRENT_ACTOR()));
+  handle('commissions:delete', (id) => database.deleteCommission(id, CURRENT_ACTOR()));
   handle('commissions:byCollaborator', () => database.getCommissionsByCollaborator());
 
   // ---- Plans (catalogo offerte) ----

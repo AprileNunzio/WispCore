@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import type { Client, Collaborator, Commission } from '../types';
 import { X, Phone, Mail, Wallet, CheckCircle2, Clock, UserRound, BarChart3 } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
+import { localYearMonth, monthKeyLabel } from '../dateUtils';
 
 interface ContentProps {
   collaborator: Collaborator;
@@ -9,8 +10,6 @@ interface ContentProps {
   clients: Client[]; // tutti i clienti (viene filtrato qui dentro per collaborator_id)
   onToggleStatus: (commissionId: number, currentStatus: string) => void;
 }
-
-const MONTH_LABELS = ['Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
 
 /**
  * Contenuto condiviso della vista a 360° di un collaboratore: entrate
@@ -34,9 +33,8 @@ export const CollaboratorDetailContent: React.FC<ContentProps> = ({ collaborator
     const today = new Date();
     const buckets: { key: string; label: string; amount: number }[] = [];
     for (let i = 11; i >= 0; i--) {
-      const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
-      const key = d.toISOString().slice(0, 7);
-      buckets.push({ key, label: MONTH_LABELS[d.getMonth()], amount: 0 });
+      const key = localYearMonth(today, -i);
+      buckets.push({ key, label: monthKeyLabel(key), amount: 0 });
     }
     const byKey = new Map(buckets.map((b) => [b.key, b]));
     for (const c of commissions) {

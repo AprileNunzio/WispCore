@@ -2,6 +2,7 @@ import type {
   Client,
   ClientLite,
   ClientDetail,
+  ClientSavePayload,
   Collaborator,
   Payment,
   Commission,
@@ -98,12 +99,13 @@ export const dbService = {
 
   // ---- Clients ----
   getClients: (): Promise<Client[]> => bridge().clients.list(),
-  saveClient: (data: Partial<Client>): Promise<Client> => bridge().clients.save(data),
+  saveClient: (data: ClientSavePayload): Promise<Client> => bridge().clients.save(data),
   deleteClient: (id: number): Promise<void> => bridge().clients.delete(id),
   getClientDetail: (id: number): Promise<ClientDetail | null> => bridge().clients.getDetail(id),
   searchClients: (query: string, limit?: number): Promise<ClientLite[]> => bridge().clients.search(query, limit),
   attachContractDocument: (id: number) => bridge().clients.attachContractDocument(id),
   openContractDocument: (id: number) => bridge().clients.openContractDocument(id),
+  getClientInstallationSplits: (id: number) => bridge().clients.getInstallationSplits(id),
 
   // ---- Network nodes (ripetitori/BTS) ----
   getNetworkNodes: () => bridge().networkNodes.list(),
@@ -117,12 +119,13 @@ export const dbService = {
   // ---- Payments ----
   getPayments: (): Promise<Payment[]> => bridge().payments.list(),
   addPayment: (data: Omit<Payment, 'id'>): Promise<Payment> => bridge().payments.add(data),
-  updatePaymentStatus: (id: number, status: PaymentStatus) => bridge().payments.updateStatus(id, status),
+  updatePaymentStatus: (id: number, status: PaymentStatus, paymentDate?: string) => bridge().payments.updateStatus(id, status, paymentDate),
 
   // ---- Commissions ----
   getCommissions: (): Promise<Commission[]> => bridge().commissions.list(),
   addCommission: (data: Omit<Commission, 'id' | 'created_at'>): Promise<Commission> => bridge().commissions.add(data),
   updateCommissionStatus: (id: number, status: PayoutStatus): Promise<void> => bridge().commissions.updateStatus(id, status),
+  deleteCommission: (id: number): Promise<void> => bridge().commissions.delete(id),
   getCommissionsByCollaborator: () => bridge().commissions.byCollaborator(),
 
   // ---- Plans ----

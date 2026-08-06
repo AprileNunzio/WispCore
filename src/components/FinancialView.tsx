@@ -2,17 +2,22 @@ import React, { useState, useEffect, useRef } from 'react';
 import { dbService } from '../dbService';
 import { useToast } from './Toast';
 import type { Payment, Client, ClientLite, PaymentStatus } from '../types';
-import { Wallet, CheckCircle2, Clock, AlertTriangle, Plus, Search } from 'lucide-react';
+import { Wallet, CheckCircle2, Clock, AlertTriangle, Plus, Search, ShieldAlert } from 'lucide-react';
+import { localDateString } from '../dateUtils';
+import { BadPayersView } from './BadPayersView';
 
 export const FinancialView: React.FC = () => {
   const { notify } = useToast();
+  const [activeTab, setActiveTab] = useState<'PAYMENTS' | 'BAD_PAYERS'>('PAYMENTS');
   const [payments, setPayments] = useState<Payment[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [statusFilter, setStatusFilter] = useState<'ALL' | PaymentStatus>('ALL');
   const [showAddModal, setShowAddModal] = useState(false);
 
-  // Ricerca live del cliente lato server: evita di caricare in memoria migliaia
-  // di opzioni in una <select> quando il database ha molti clienti.
+  // Modale per segnare un pagamento come saldato con data incasso personalizzata
+  const [payModal, setPayModal] = useState<{ paymentId: number; clientName: string; amount: number; paymentDate: string } | null>(null);
+
+  // Ricerca live del cliente lato server
   const [clientQuery, setClientQuery] = useState('');
   const [clientResults, setClientResults] = useState<ClientLite[]>([]);
   const [selectedClient, setSelectedClient] = useState<ClientLite | null>(null);
@@ -29,7 +34,7 @@ export const FinancialView: React.FC = () => {
     client_id: 0,
     amount: 29.90,
     payment_type: 'RECURRING',
-    due_date: new Date().toISOString().split('T')[0],
+    due_date: localDateString(),
     status: 'PENDING'
   });
 
@@ -52,13 +57,30 @@ export const FinancialView: React.FC = () => {
     setClients(loadedClients);
   };
 
-  const handleUpdateStatus = async (id: number, status: PaymentStatus) => {
-    const result = await dbService.updatePaymentStatus(id, status);
-    if (status === 'PAID' && result?.nextDueDate) {
-      notify(`Pagamento saldato. Prossima scadenza generata in automatico: ${result.nextDueDate}.`, 'success');
+  const handleOpenPayModal = (p: Payment) => {
+    setPayModal({
+      paymentId: p.id,
+      clientName: p.client_name || 'Cliente',
+      amount: p.amount,
+      paymentDate: localDateString(),
+    });
+  };
+
+  const handleConfirmPaid = async () => {
+    if (!payModal) return;
+    const result = await dbService.updatePaymentStatus(payModal.paymentId, 'PAID', payModal.paymentDate);
+    if (result?.nextDueDate) {
+      notify(`Pagamento saldato in data ${payModal.paymentDate}. Prossima scadenza generata: ${result.nextDueDate}.`, 'success');
     } else {
-      notify(status === 'PAID' ? 'Pagamento segnato come saldato.' : 'Stato pagamento aggiornato.', 'success');
+      notify(`Pagamento segnato come saldato in data ${payModal.paymentDate}.`, 'success');
     }
+    setPayModal(null);
+    loadData();
+  };
+
+  const handleUpdateStatusDirect = async (id: number, status: PaymentStatus) => {
+    await dbService.updatePaymentStatus(id, status);
+    notify('Stato pagamento aggiornato.', 'success');
     loadData();
   };
 
@@ -82,7 +104,7 @@ export const FinancialView: React.FC = () => {
 
     await dbService.addPayment({
       ...newPayment,
-      payment_date: newPayment.status === 'PAID' ? new Date().toISOString().split('T')[0] : ''
+      payment_date: newPayment.status === 'PAID' ? localDateString() : ''
     });
 
     notify('Pagamento registrato con successo.', 'success');
@@ -105,138 +127,165 @@ export const FinancialView: React.FC = () => {
         <div>
           <h1 className="text-2xl font-bold text-gray-900 tracking-tight flex items-center gap-2">
             <Wallet className="text-emerald-600" size={24} />
-            <span>Modulo Finanziario & Registrazione Pagamenti</span>
+            <span>Modulo Finanziario & Indice Affidabilità</span>
           </h1>
-          <p className="text-gray-500 text-sm mt-1">Tracciamento incassi, canoni installazione una-tantum e solleciti insoluti</p>
+          <p className="text-gray-500 text-sm mt-1">Tracciamento incassi, canoni installazione una-tantum e analisi Cattivi Pagatori</p>
         </div>
 
-        <button
-          onClick={handleOpenAddModal}
-          className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-sm font-semibold px-4 py-3 rounded-xl shadow-lg shadow-emerald-600/20 border border-emerald-400/20 flex items-center justify-center gap-2 cursor-pointer transition-all shrink-0"
-        >
-          <Plus size={16} />
-          <span>Registra Nuovo Pagamento</span>
-        </button>
-      </div>
-
-      <div className="ultra-grid">
-        <div className="glass-panel p-5 rounded-2xl border border-gray-200">
-          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider block">Totale Incassato</span>
-          <h3 className="text-2xl font-black text-emerald-600 mt-1 font-mono">€ {totalIncassato.toFixed(2)}</h3>
-          <span className="text-xs text-gray-400 mt-2 block">Pagamenti saldati con successo</span>
-        </div>
-
-        <div className="glass-panel p-5 rounded-2xl border border-gray-200">
-          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider block">In Scadenza (Pending)</span>
-          <h3 className="text-2xl font-black text-amber-600 mt-1 font-mono">€ {totalInAttesa.toFixed(2)}</h3>
-          <span className="text-xs text-gray-400 mt-2 block">In attesa di liquidazione</span>
-        </div>
-
-        <div className="glass-panel p-5 rounded-2xl border border-gray-200">
-          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider block">Totale Insoluti (Overdue)</span>
-          <h3 className="text-2xl font-black text-rose-600 mt-1 font-mono">€ {totalInsoluti.toFixed(2)}</h3>
-          <span className="text-xs text-rose-600 mt-2 block flex items-center gap-1">
-            <AlertTriangle size={12} /> Richiedono sollecito immediato
-          </span>
-        </div>
-      </div>
-
-      <div className="glass-panel rounded-2xl p-6 border border-gray-200">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-5">
-          <h3 className="text-base font-bold text-gray-900">Registro Pagamenti WISP</h3>
-
-          <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-xl border border-gray-200 text-sm">
-            {(['ALL', 'PAID', 'PENDING', 'OVERDUE'] as const).map(st => (
-              <button
-                key={st}
-                onClick={() => setStatusFilter(st)}
-                className={`px-3 py-1.5 rounded-lg font-medium transition-all cursor-pointer ${
-                  statusFilter === st
-                    ? 'bg-blue-600 text-white shadow'
-                    : 'text-gray-500 hover:text-gray-900'
-                }`}
-              >
-                {st === 'ALL' && 'Tutti'}
-                {st === 'PAID' && 'Saldati'}
-                {st === 'PENDING' && 'In Attesa'}
-                {st === 'OVERDUE' && 'Insoluti'}
-              </button>
-            ))}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-xl border border-gray-200 text-xs">
+            <button
+              onClick={() => setActiveTab('PAYMENTS')}
+              className={`px-3 py-2 rounded-lg font-semibold transition-all cursor-pointer ${
+                activeTab === 'PAYMENTS' ? 'bg-blue-600 text-white shadow' : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              Registro Pagamenti
+            </button>
+            <button
+              onClick={() => setActiveTab('BAD_PAYERS')}
+              className={`px-3 py-2 rounded-lg font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'BAD_PAYERS' ? 'bg-rose-600 text-white shadow' : 'text-rose-700 hover:bg-rose-50'
+              }`}
+            >
+              <ShieldAlert size={14} /> Cattivi Pagatori
+            </button>
           </div>
-        </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm text-gray-600">
-            <thead className="bg-gray-100 text-gray-500 uppercase text-xs tracking-wider">
-              <tr>
-                <th className="p-3">ID Variazione</th>
-                <th className="p-3">Cliente</th>
-                <th className="p-3">Tipo Pagamento</th>
-                <th className="p-3 font-mono">Importo</th>
-                <th className="p-3">Data Scadenza</th>
-                <th className="p-3">Stato</th>
-                <th className="p-3 text-right">Azione</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {filteredPayments.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="p-6 text-center text-gray-400">Nessun pagamento corrisponde ai filtri impostati.</td>
-                </tr>
-              ) : (
-                filteredPayments.map(p => (
-                  <tr key={p.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="p-3 font-mono text-gray-400">#PAY-{p.id.toString().padStart(4, '0')}</td>
-                    <td className="p-3 font-semibold text-gray-900">{p.client_name}</td>
-                    <td className="p-3">
-                      <span className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded font-mono text-xs">
-                        {p.payment_type}
-                      </span>
-                    </td>
-                    <td className="p-3 font-mono font-bold text-gray-900">€ {p.amount.toFixed(2)}</td>
-                    <td className="p-3 font-mono text-gray-400">{p.due_date}</td>
-                    <td className="p-3">
-                      {p.status === 'PAID' && (
-                        <span className="inline-flex items-center gap-1 text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-0.5 rounded-full font-semibold">
-                          <CheckCircle2 size={12} /> Saldato ({p.payment_date})
-                        </span>
-                      )}
-                      {p.status === 'PENDING' && (
-                        <span className="inline-flex items-center gap-1 text-xs bg-amber-50 text-amber-700 border border-amber-200 px-2.5 py-0.5 rounded-full font-semibold">
-                          <Clock size={12} /> In Attesa
-                        </span>
-                      )}
-                      {p.status === 'OVERDUE' && (
-                        <span className="inline-flex items-center gap-1 text-xs bg-rose-50 text-rose-700 border border-rose-200 px-2.5 py-0.5 rounded-full font-semibold">
-                          <AlertTriangle size={12} /> Scaduto / Insoluto
-                        </span>
-                      )}
-                    </td>
-                    <td className="p-3 text-right space-x-1">
-                      {p.status !== 'PAID' && (
-                        <button
-                          onClick={() => handleUpdateStatus(p.id, 'PAID')}
-                          className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded font-medium cursor-pointer text-xs"
-                        >
-                          Segna Saldato
-                        </button>
-                      )}
-                      {p.status === 'PENDING' && (
-                        <button
-                          onClick={() => handleUpdateStatus(p.id, 'OVERDUE')}
-                          className="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded font-medium cursor-pointer text-xs"
-                        >
-                          Segna Insoluto
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+          <button
+            onClick={handleOpenAddModal}
+            className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-semibold px-4 py-2.5 rounded-xl shadow-lg shadow-emerald-600/20 border border-emerald-400/20 flex items-center justify-center gap-1.5 cursor-pointer transition-all shrink-0"
+          >
+            <Plus size={16} />
+            <span>Registra Nuovo Pagamento</span>
+          </button>
         </div>
       </div>
+
+      {activeTab === 'BAD_PAYERS' ? (
+        <BadPayersView clients={clients} payments={payments} />
+      ) : (
+        <>
+          <div className="ultra-grid">
+            <div className="glass-panel p-5 rounded-2xl border border-gray-200">
+              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider block">Totale Incassato</span>
+              <h3 className="text-2xl font-black text-emerald-600 mt-1 font-mono">€ {totalIncassato.toFixed(2)}</h3>
+              <span className="text-xs text-gray-400 mt-2 block">Pagamenti saldati con successo</span>
+            </div>
+
+            <div className="glass-panel p-5 rounded-2xl border border-gray-200">
+              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider block">In Scadenza (Pending)</span>
+              <h3 className="text-2xl font-black text-amber-600 mt-1 font-mono">€ {totalInAttesa.toFixed(2)}</h3>
+              <span className="text-xs text-gray-400 mt-2 block">In attesa di liquidazione</span>
+            </div>
+
+            <div className="glass-panel p-5 rounded-2xl border border-gray-200">
+              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider block">Totale Insoluti (Overdue)</span>
+              <h3 className="text-2xl font-black text-rose-600 mt-1 font-mono">€ {totalInsoluti.toFixed(2)}</h3>
+              <span className="text-xs text-rose-600 mt-2 block flex items-center gap-1">
+                <AlertTriangle size={12} /> Richiedono sollecito immediato
+              </span>
+            </div>
+          </div>
+
+          <div className="glass-panel rounded-2xl p-6 border border-gray-200">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-5">
+              <h3 className="text-base font-bold text-gray-900">Registro Pagamenti WISP</h3>
+
+              <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-xl border border-gray-200 text-sm">
+                {(['ALL', 'PAID', 'PENDING', 'OVERDUE'] as const).map(st => (
+                  <button
+                    key={st}
+                    onClick={() => setStatusFilter(st)}
+                    className={`px-3 py-1.5 rounded-lg font-medium transition-all cursor-pointer ${
+                      statusFilter === st
+                        ? 'bg-blue-600 text-white shadow'
+                        : 'text-gray-500 hover:text-gray-900'
+                    }`}
+                  >
+                    {st === 'ALL' && 'Tutti'}
+                    {st === 'PAID' && 'Saldati'}
+                    {st === 'PENDING' && 'In Attesa'}
+                    {st === 'OVERDUE' && 'Insoluti'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm text-gray-600">
+                <thead className="bg-gray-100 text-gray-500 uppercase text-xs tracking-wider">
+                  <tr>
+                    <th className="p-3">ID Variazione</th>
+                    <th className="p-3">Cliente</th>
+                    <th className="p-3">Tipo Pagamento</th>
+                    <th className="p-3 font-mono">Importo</th>
+                    <th className="p-3">Data Scadenza</th>
+                    <th className="p-3">Stato</th>
+                    <th className="p-3 text-right">Azione</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {filteredPayments.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="p-6 text-center text-gray-400">Nessun pagamento corrisponde ai filtri impostati.</td>
+                    </tr>
+                  ) : (
+                    filteredPayments.map(p => (
+                      <tr key={p.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="p-3 font-mono text-gray-400">#PAY-{p.id.toString().padStart(4, '0')}</td>
+                        <td className="p-3 font-semibold text-gray-900">{p.client_name}</td>
+                        <td className="p-3">
+                          <span className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded font-mono text-xs">
+                            {p.payment_type}
+                          </span>
+                        </td>
+                        <td className="p-3 font-mono font-bold text-gray-900">€ {p.amount.toFixed(2)}</td>
+                        <td className="p-3 font-mono text-gray-400">{p.due_date}</td>
+                        <td className="p-3">
+                          {p.status === 'PAID' && (
+                            <span className="inline-flex items-center gap-1 text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-0.5 rounded-full font-semibold">
+                              <CheckCircle2 size={12} /> Saldato ({p.payment_date})
+                            </span>
+                          )}
+                          {p.status === 'PENDING' && (
+                            <span className="inline-flex items-center gap-1 text-xs bg-amber-50 text-amber-700 border border-amber-200 px-2.5 py-0.5 rounded-full font-semibold">
+                              <Clock size={12} /> In Attesa
+                            </span>
+                          )}
+                          {p.status === 'OVERDUE' && (
+                            <span className="inline-flex items-center gap-1 text-xs bg-rose-50 text-rose-700 border border-rose-200 px-2.5 py-0.5 rounded-full font-semibold">
+                              <AlertTriangle size={12} /> Scaduto / Insoluto
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-3 text-right space-x-1">
+                          {p.status !== 'PAID' && (
+                            <button
+                              onClick={() => handleOpenPayModal(p)}
+                              className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded font-medium cursor-pointer text-xs"
+                            >
+                              Segna Saldato
+                            </button>
+                          )}
+                          {p.status === 'PENDING' && (
+                            <button
+                              onClick={() => handleUpdateStatusDirect(p.id, 'OVERDUE')}
+                              className="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded font-medium cursor-pointer text-xs"
+                            >
+                              Segna Insoluto
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
 
       {showAddModal && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -343,6 +392,45 @@ export const FinancialView: React.FC = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {payModal && (
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white rounded-3xl p-6 border border-gray-200 shadow-2xl space-y-4">
+            <h3 className="text-base font-bold text-gray-900">Registra Saldo Pagamento</h3>
+            <p className="text-xs text-gray-500">
+              Stai per marcare come saldato il pagamento per <span className="font-semibold text-gray-900">{payModal.clientName}</span> dell'importo di <span className="font-mono font-bold text-emerald-700">€ {payModal.amount.toFixed(2)}</span>.
+            </p>
+
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">Data Reale Incasso (Fuso Roma)</label>
+              <input
+                type="date"
+                required
+                value={payModal.paymentDate}
+                onChange={(e) => setPayModal({ ...payModal, paymentDate: e.target.value })}
+                className="w-full bg-white border border-gray-300 rounded-xl p-3 text-gray-900 font-mono text-sm"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setPayModal(null)}
+                className="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl cursor-pointer text-xs"
+              >
+                Annulla
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmPaid}
+                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-xl cursor-pointer text-xs"
+              >
+                Conferma Saldato
+              </button>
+            </div>
           </div>
         </div>
       )}
