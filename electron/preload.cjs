@@ -137,9 +137,6 @@ contextBridge.exposeInMainWorld('wispcore', {
       save: (data) => invoke('beta:nasRouters:save', data),
       delete: (id) => invoke('beta:nasRouters:delete', id),
     },
-    nms: {
-      fetchAccounts: (nasId) => invoke('beta:nms:fetchAccounts', nasId),
-    },
     ipamSubnets: {
       list: () => invoke('beta:ipamSubnets:list'),
       save: (data) => invoke('beta:ipamSubnets:save', data),
@@ -151,6 +148,22 @@ contextBridge.exposeInMainWorld('wispcore', {
     cpeCredentials: {
       get: () => invoke('beta:cpeCredentials:get'),
       save: (settings) => invoke('beta:cpeCredentials:save', settings),
+    },
+    nms: {
+      fetchAccounts: (nasId) => invoke('beta:nms:fetchAccounts', nasId),
+    },
+    inventory: {
+      list: () => invoke('beta:inventory:list'),
+      save: (data) => invoke('beta:inventory:save', data),
+      delete: (id) => invoke('beta:inventory:delete', id),
+    },
+    monitoringNodes: {
+      list: () => invoke('beta:monitoringNodes:list'),
+      save: (data) => invoke('beta:monitoringNodes:save', data),
+      delete: (id) => invoke('beta:monitoringNodes:delete', id),
+    },
+    ipam: {
+      heatmap: () => invoke('beta:ipam:heatmap'),
     }
   },
   invoke: (channel, ...args) => invoke(channel, ...args)

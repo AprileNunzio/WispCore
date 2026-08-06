@@ -411,3 +411,41 @@ export interface BetaCpeCredentials {
   uisp_key?: string;
 }
 
+export interface BetaInventoryItem {
+  id: number;
+  uuid?: string;
+  device_type: string; // 'ANTENNA_CPE', 'ROUTER_WIFI', 'SWITCH', 'OTHER'
+  brand?: string;
+  model?: string;
+  mac_address?: string;
+  serial_number?: string;
+  status: string; // 'IN_STOCK', 'INSTALLED', 'BROKEN', 'RETURNED'
+  client_id?: number;
+  first_name?: string; // from join
+  last_name?: string; // from join
+  notes?: string;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface BetaMonitoringNode {
+  id: number;
+  uuid?: string;
+  name: string;
+  ip_address: string;
+  type: string; // 'BTS', 'ROUTER', 'SWITCH'
+  status: string; // 'ONLINE', 'OFFLINE', 'UNKNOWN'
+  last_check?: string;
+  uptime_percentage: number;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface IpamHeatmapClient {
+  id: number;
+  first_name: string;
+  last_name: string;
+  assigned_ip: string;
+  mac_address?: string;
+  status: 'ACTIVE' | 'SUSPENDED';
+}

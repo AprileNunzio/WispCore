@@ -234,6 +234,36 @@ CREATE TABLE IF NOT EXISTS beta_ipam_subnets (
   updated_at TEXT NOT NULL,
   deleted INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS beta_inventory (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  uuid TEXT UNIQUE NOT NULL,
+  device_type TEXT NOT NULL,
+  brand TEXT,
+  model TEXT,
+  mac_address TEXT,
+  serial_number TEXT,
+  status TEXT NOT NULL DEFAULT 'IN_STOCK',
+  client_id INTEGER,
+  notes TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted INTEGER NOT NULL DEFAULT 0,
+  FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS beta_monitoring_nodes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  uuid TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  ip_address TEXT NOT NULL,
+  type TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'UNKNOWN',
+  last_check TEXT,
+  uptime_percentage REAL DEFAULT 100,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted INTEGER NOT NULL DEFAULT 0
+);
 `;
 
 /** Adds columns that may be missing on a database created by an older version of the app. */
@@ -1884,3 +1914,98 @@ export function saveBetaCpeCredentials(settings, actor) {
   return getBetaCpeCredentials();
 }
 
+export function getBetaInventoryItems() {
+  const sql = `
+    SELECT 
+      i.*,
+      c.first_name, c.last_name
+    FROM beta_inventory i
+    LEFT JOIN clients c ON i.client_id = c.id
+    WHERE i.deleted = 0
+    ORDER BY i.created_at DESC
+  `;
+  return all(sql);
+}
+
+export function saveBetaInventoryItem(data, actor) {
+  const now = new Date().toISOString();
+  if (data.id) {
+    const stmt = db.prepare(`
+      UPDATE beta_inventory 
+      SET device_type = ?, brand = ?, model = ?, mac_address = ?, serial_number = ?, status = ?, client_id = ?, notes = ?, updated_at = ?
+      WHERE id = ?
+    `);
+    stmt.run([data.device_type, data.brand || null, data.model || null, data.mac_address || null, data.serial_number || null, data.status, data.client_id || null, data.notes || null, now, data.id]);
+    stmt.free();
+    recordAudit(actor, 'UPDATE', 'beta_inventory', data.id, null);
+    persist();
+    return data.id;
+  } else {
+    const uuidStr = crypto.randomUUID();
+    const stmt = db.prepare(`
+      INSERT INTO beta_inventory (uuid, device_type, brand, model, mac_address, serial_number, status, client_id, notes, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    stmt.run([uuidStr, data.device_type, data.brand || null, data.model || null, data.mac_address || null, data.serial_number || null, data.status || 'IN_STOCK', data.client_id || null, data.notes || null, now, now]);
+    const id = getInsertId();
+    stmt.free();
+    recordAudit(actor, 'CREATE', 'beta_inventory', id, null);
+    persist();
+    return id;
+  }
+}
+
+export function deleteBetaInventoryItem(id, actor) {
+  run('UPDATE beta_inventory SET deleted = 1, updated_at = ? WHERE id = ?', [new Date().toISOString(), id]);
+  recordAudit(actor, 'DELETE', 'beta_inventory', id, null);
+  persist();
+  return true;
+}
+
+export function getBetaMonitoringNodes() {
+  return all('SELECT * FROM beta_monitoring_nodes WHERE deleted = 0 ORDER BY name ASC');
+}
+
+export function saveBetaMonitoringNode(data, actor) {
+  const now = new Date().toISOString();
+  if (data.id) {
+    const stmt = db.prepare(`
+      UPDATE beta_monitoring_nodes 
+      SET name = ?, ip_address = ?, type = ?, status = ?, last_check = ?, uptime_percentage = ?, updated_at = ?
+      WHERE id = ?
+    `);
+    stmt.run([data.name, data.ip_address, data.type, data.status, data.last_check || null, data.uptime_percentage ?? 100, now, data.id]);
+    stmt.free();
+    recordAudit(actor, 'UPDATE', 'beta_monitoring_node', data.id, null);
+    persist();
+    return data.id;
+  } else {
+    const uuidStr = crypto.randomUUID();
+    const stmt = db.prepare(`
+      INSERT INTO beta_monitoring_nodes (uuid, name, ip_address, type, status, last_check, uptime_percentage, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    stmt.run([uuidStr, data.name, data.ip_address, data.type, data.status || 'UNKNOWN', data.last_check || null, data.uptime_percentage ?? 100, now, now]);
+    const id = getInsertId();
+    stmt.free();
+    recordAudit(actor, 'CREATE', 'beta_monitoring_node', id, null);
+    persist();
+    return id;
+  }
+}
+
+export function deleteBetaMonitoringNode(id, actor) {
+  run('UPDATE beta_monitoring_nodes SET deleted = 1, updated_at = ? WHERE id = ?', [new Date().toISOString(), id]);
+  recordAudit(actor, 'DELETE', 'beta_monitoring_node', id, null);
+  persist();
+  return true;
+}
+
+export function getIpamHeatmapData() {
+  const sql = `
+    SELECT id, first_name, last_name, assigned_ip, mac_address, status
+    FROM clients
+    WHERE assigned_ip IS NOT NULL AND assigned_ip != '' AND deleted = 0
+  `;
+  return all(sql);
+}

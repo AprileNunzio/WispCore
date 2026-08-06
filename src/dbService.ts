@@ -19,6 +19,9 @@ import type {
   BetaIpamSubnet,
   BetaRadiusSettings,
   BetaCpeCredentials,
+  BetaInventoryItem,
+  BetaMonitoringNode,
+  IpamHeatmapClient,
 } from './types';
 
 /**
@@ -202,4 +205,14 @@ export const dbService = {
   saveBetaCpeCredentials: (settings: BetaCpeCredentials): Promise<void> => bridge().beta.cpeCredentials.save(settings),
 
   fetchMikrotikAccounts: (nasId: number): Promise<any[]> => bridge().beta.nms.fetchAccounts(nasId),
+
+  getBetaInventoryItems: (): Promise<BetaInventoryItem[]> => bridge().beta.inventory.list(),
+  saveBetaInventoryItem: (data: Partial<BetaInventoryItem>): Promise<number> => bridge().beta.inventory.save(data),
+  deleteBetaInventoryItem: (id: number): Promise<void> => bridge().beta.inventory.delete(id),
+
+  getBetaMonitoringNodes: (): Promise<BetaMonitoringNode[]> => bridge().beta.monitoringNodes.list(),
+  saveBetaMonitoringNode: (data: Partial<BetaMonitoringNode>): Promise<number> => bridge().beta.monitoringNodes.save(data),
+  deleteBetaMonitoringNode: (id: number): Promise<void> => bridge().beta.monitoringNodes.delete(id),
+
+  getIpamHeatmapData: (): Promise<IpamHeatmapClient[]> => bridge().beta.ipam.heatmap(),
 };

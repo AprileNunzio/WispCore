@@ -1,14 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { dbService } from '../../dbService';
 import { useToast, useConfirm } from '../Toast';
-import { Network, Server, KeyRound, Wifi, Activity, ShieldCheck, Database, Save, Plus, Trash2, Copy } from 'lucide-react';
-import type { BetaNasRouter, BetaIpamSubnet, BetaRadiusSettings, BetaCpeCredentials } from '../../types';
+import { Server, KeyRound, Activity, ShieldCheck, Database, Save, Plus, Trash2, Copy, Package } from 'lucide-react';
+import type { BetaNasRouter, BetaRadiusSettings, BetaCpeCredentials } from '../../types';
+import { IpamView } from './IpamView';
+import { InventoryView } from './InventoryView';
+import { MonitoringView } from './MonitoringView';
 
 export const EnterpriseBetaView: React.FC = () => {
   const { notify } = useToast();
   const confirmDialog = useConfirm();
   
-  const [activeTab, setActiveTab] = useState<'nms' | 'radius' | 'ipam' | 'cpe'>('nms');
+  const [activeTab, setActiveTab] = useState<'nms' | 'radius' | 'ipam' | 'cpe' | 'inventory' | 'monitoring'>('nms');
 
   // --- NMS State ---
   const [routers, setRouters] = useState<BetaNasRouter[]>([]);
@@ -17,12 +20,6 @@ export const EnterpriseBetaView: React.FC = () => {
 
   // --- RADIUS State ---
   const [radiusSettings, setRadiusSettings] = useState<BetaRadiusSettings>({ enabled: false, secret: '', coa_port: 3799, disconnect_on_overdue: false });
-
-  // --- IPAM State ---
-  const [subnets, setSubnets] = useState<BetaIpamSubnet[]>([]);
-  const [showSubnetModal, setShowSubnetModal] = useState(false);
-  const [subnetForm, setSubnetForm] = useState<Partial<BetaIpamSubnet>>({});
-  const [selectedSubnet, setSelectedSubnet] = useState<BetaIpamSubnet | null>(null);
 
   // --- CPE Credentials State ---
   const [cpeCredentials, setCpeCredentials] = useState<BetaCpeCredentials>({ username: 'admin', password: '', uisp_key: '' });
@@ -37,8 +34,6 @@ export const EnterpriseBetaView: React.FC = () => {
         setRouters(await dbService.getBetaNasRouters());
       } else if (activeTab === 'radius') {
         setRadiusSettings(await dbService.getBetaRadiusSettings());
-      } else if (activeTab === 'ipam') {
-        setSubnets(await dbService.getBetaIpamSubnets());
       } else if (activeTab === 'cpe') {
         setCpeCredentials(await dbService.getBetaCpeCredentials());
       }
@@ -95,48 +90,6 @@ export const EnterpriseBetaView: React.FC = () => {
     }
   };
 
-  // --- IPAM Actions ---
-  const handleSaveSubnet = async () => {
-    if (!subnetForm.name || !subnetForm.cidr) {
-      notify('Nome e CIDR obbligatori', 'error');
-      return;
-    }
-    try {
-      await dbService.saveBetaIpamSubnet(subnetForm);
-      notify('Subnet salvata', 'success');
-      setShowSubnetModal(false);
-      loadData();
-    } catch (err) {
-      notify(err instanceof Error ? err.message : 'Errore', 'error');
-    }
-  };
-
-  // IP Math Helper
-  const calculateIps = (cidr: string) => {
-    try {
-      const [ip, bits] = cidr.split('/');
-      const mask = ~(Math.pow(2, 32 - parseInt(bits)) - 1);
-      const ipNum = ip.split('.').reduce((acc, octet) => (acc << 8) + parseInt(octet), 0);
-      const network = ipNum & mask;
-      const broadcast = network | ~mask;
-      
-      const ips = [];
-      // Generiamo solo fino a /24 (254 IP) per non bloccare la UI in caso di /8
-      const limit = Math.min(broadcast - 1, network + 254);
-      for (let i = network + 1; i <= limit; i++) {
-        ips.push([
-          (i >>> 24) & 255,
-          (i >>> 16) & 255,
-          (i >>> 8) & 255,
-          i & 255
-        ].join('.'));
-      }
-      return ips;
-    } catch (e) {
-      return [];
-    }
-  };
-
   return (
     <div className="space-y-6 pb-12">
       <div className="bg-gradient-to-r from-gray-900 to-indigo-900 rounded-2xl p-6 text-white shadow-xl relative overflow-hidden">
@@ -160,6 +113,12 @@ export const EnterpriseBetaView: React.FC = () => {
           </button>
           <button onClick={() => setActiveTab('ipam')} className={`px-5 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors ${activeTab === 'ipam' ? 'bg-white shadow text-emerald-600' : 'text-gray-500 hover:text-gray-800'}`}>
             <Database size={16} /> IPAM
+          </button>
+          <button onClick={() => setActiveTab('inventory')} className={`px-5 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors ${activeTab === 'inventory' ? 'bg-white shadow text-orange-600' : 'text-gray-500 hover:text-gray-800'}`}>
+            <Package size={16} /> Magazzino
+          </button>
+          <button onClick={() => setActiveTab('monitoring')} className={`px-5 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors ${activeTab === 'monitoring' ? 'bg-white shadow text-red-600' : 'text-gray-500 hover:text-gray-800'}`}>
+            <Activity size={16} /> Monitoraggio
           </button>
           <button onClick={() => setActiveTab('cpe')} className={`px-5 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors ${activeTab === 'cpe' ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}>
             <KeyRound size={16} /> CPE & Apparati
@@ -327,86 +286,13 @@ export const EnterpriseBetaView: React.FC = () => {
       )}
 
       {/* IPAM TAB */}
-      {activeTab === 'ipam' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-1 space-y-4">
-             <div className="flex justify-between items-center">
-                <h2 className="text-lg font-bold text-gray-800">Elenco Subnet</h2>
-                <button onClick={() => { setSubnetForm({}); setShowSubnetModal(true); }} className="text-indigo-600 hover:bg-indigo-50 p-2 rounded-lg font-semibold text-sm flex items-center gap-1">
-                  <Plus size={16} /> Nuova
-                </button>
-             </div>
-             
-             <div className="space-y-3">
-               {subnets.map(s => (
-                 <div key={s.id} onClick={() => setSelectedSubnet(s)} className={`p-4 rounded-xl border cursor-pointer transition-all ${selectedSubnet?.id === s.id ? 'bg-indigo-50 border-indigo-300 ring-1 ring-indigo-500' : 'bg-white hover:border-indigo-300 border-gray-200'}`}>
-                    <div className="flex items-center gap-2 mb-1">
-                      <Wifi size={16} className={selectedSubnet?.id === s.id ? 'text-indigo-600' : 'text-gray-400'} />
-                      <h3 className="font-bold text-gray-900">{s.name}</h3>
-                    </div>
-                    <p className="text-xs font-mono text-gray-500 bg-gray-100 p-1 rounded inline-block">{s.cidr}</p>
-                 </div>
-               ))}
-               {subnets.length === 0 && <p className="text-gray-400 text-sm">Nessuna subnet. Creane una per generare la mappa IP.</p>}
-             </div>
-          </div>
+      {activeTab === 'ipam' && <IpamView />}
 
-          <div className="lg:col-span-2">
-            {selectedSubnet ? (
-              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
-                <h2 className="text-xl font-bold text-gray-900 mb-1">{selectedSubnet.name}</h2>
-                <div className="flex gap-4 text-sm text-gray-500 mb-6 font-mono">
-                   <span>CIDR: <strong className="text-gray-900">{selectedSubnet.cidr}</strong></span>
-                   <span>Gateway: <strong className="text-gray-900">{selectedSubnet.gateway || 'N/D'}</strong></span>
-                   <span>VLAN: <strong className="text-gray-900">{selectedSubnet.vlan_id || 'N/D'}</strong></span>
-                </div>
-                
-                <h3 className="font-bold text-gray-700 mb-3 text-sm">Visualizzazione Block Allocation (Disponibili: {calculateIps(selectedSubnet.cidr).length})</h3>
-                <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-2 max-h-96 overflow-y-auto pr-2 custom-scrollbar">
-                  {calculateIps(selectedSubnet.cidr).map(ip => {
-                    // MOCK logica per UI: il gateway è rosso, alcuni a caso blu (assegnati)
-                    const isGateway = ip === selectedSubnet.gateway;
-                    // Solo per demo UI beta, mostriamo i primi IP come assegnati a caso
-                    const isAssignedMock = Math.random() > 0.8 && !isGateway;
-                    
-                    return (
-                      <div key={ip} title={ip} className={`p-2 text-[10px] font-mono text-center rounded border ${isGateway ? 'bg-red-50 border-red-200 text-red-700 font-bold' : isAssignedMock ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-gray-50 border-gray-200 text-gray-400 hover:bg-gray-100 cursor-crosshair'}`}>
-                        .{ip.split('.')[3]}
-                      </div>
-                    );
-                  })}
-                </div>
-                <p className="text-[11px] text-gray-400 mt-4 text-right">* Clicca su un IP libero per assegnarlo (WIP)</p>
-              </div>
-            ) : (
-              <div className="h-full min-h-[300px] border-2 border-dashed border-gray-200 rounded-2xl flex flex-col items-center justify-center text-gray-400">
-                 <Network size={48} className="mb-4 opacity-50" />
-                 <p>Seleziona una subnet per visualizzare la mappa degli indirizzi IP.</p>
-              </div>
-            )}
-          </div>
+      {/* INVENTORY TAB */}
+      {activeTab === 'inventory' && <InventoryView />}
 
-          {showSubnetModal && (
-            <div className="fixed inset-0 z-50 bg-gray-900/40 backdrop-blur-sm flex items-center justify-center p-4">
-              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
-                <h3 className="text-xl font-bold text-gray-900">Aggiungi Subnet IPAM</h3>
-                <div className="space-y-3 text-sm">
-                  <div><label className="block text-gray-700 mb-1">Nome / Descrizione</label><input type="text" className="w-full border rounded-lg p-2" value={subnetForm.name || ''} onChange={e => setSubnetForm({...subnetForm, name: e.target.value})} placeholder="es. Clienti PPPoE - Torre 1" /></div>
-                  <div><label className="block text-gray-700 mb-1">Rete CIDR</label><input type="text" className="w-full border rounded-lg p-2 font-mono" value={subnetForm.cidr || ''} onChange={e => setSubnetForm({...subnetForm, cidr: e.target.value})} placeholder="192.168.10.0/24" /></div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div><label className="block text-gray-700 mb-1">Gateway (Opzionale)</label><input type="text" className="w-full border rounded-lg p-2 font-mono text-xs" value={subnetForm.gateway || ''} onChange={e => setSubnetForm({...subnetForm, gateway: e.target.value})} placeholder="192.168.10.1" /></div>
-                    <div><label className="block text-gray-700 mb-1">VLAN (Opzionale)</label><input type="number" className="w-full border rounded-lg p-2" value={subnetForm.vlan_id || ''} onChange={e => setSubnetForm({...subnetForm, vlan_id: parseInt(e.target.value)})} /></div>
-                  </div>
-                </div>
-                <div className="flex gap-2 pt-4">
-                  <button onClick={() => setShowSubnetModal(false)} className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-xl font-bold">Annulla</button>
-                  <button onClick={handleSaveSubnet} className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-xl font-bold">Salva Rete</button>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
+      {/* MONITORING TAB */}
+      {activeTab === 'monitoring' && <MonitoringView />}
     </div>
   );
 };

@@ -166,6 +166,19 @@ export interface WispCoreBridge {
       get: () => Promise<import('./types').BetaCpeCredentials>;
       save: (settings: import('./types').BetaCpeCredentials) => Promise<void>;
     };
+    inventory: {
+      list: () => Promise<import('./types').BetaInventoryItem[]>;
+      save: (data: Partial<import('./types').BetaInventoryItem>) => Promise<number>;
+      delete: (id: number) => Promise<void>;
+    };
+    monitoringNodes: {
+      list: () => Promise<import('./types').BetaMonitoringNode[]>;
+      save: (data: Partial<import('./types').BetaMonitoringNode>) => Promise<number>;
+      delete: (id: number) => Promise<void>;
+    };
+    ipam: {
+      heatmap: () => Promise<import('./types').IpamHeatmapClient[]>;
+    };
   };
   invoke: (channel: string, ...args: any[]) => Promise<any>;
 }

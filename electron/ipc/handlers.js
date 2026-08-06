@@ -229,6 +229,17 @@ export function registerIpcHandlers(getWindow) {
 
   handle('beta:nms:fetchAccounts', (nasId) => mikrotikSync.fetchMikrotikAccounts(nasId));
 
+  // Nuovi handler Inventory & Monitoring
+  handle('beta:inventory:list', () => database.getBetaInventoryItems());
+  handle('beta:inventory:save', (data) => database.saveBetaInventoryItem(data, CURRENT_ACTOR()));
+  handle('beta:inventory:delete', (id) => database.deleteBetaInventoryItem(id, CURRENT_ACTOR()));
+
+  handle('beta:monitoringNodes:list', () => database.getBetaMonitoringNodes());
+  handle('beta:monitoringNodes:save', (data) => database.saveBetaMonitoringNode(data, CURRENT_ACTOR()));
+  handle('beta:monitoringNodes:delete', (id) => database.deleteBetaMonitoringNode(id, CURRENT_ACTOR()));
+
+  handle('beta:ipam:heatmap', () => database.getIpamHeatmapData());
+
   // ---- Auto-update (real GitHub Releases check, honestly reported) ----
   const sendUpdateEvent = (payload) => {
     const win = getWindow();
