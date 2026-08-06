@@ -19,6 +19,33 @@ export const BILLING_CYCLE_MONTHS = {
   ANNUAL: 12,
 };
 
+export const getValidPayments = (payments = []) => payments.filter(p => !p.deleted);
+export const getValidCommissions = (commissions = []) => commissions.filter(c => !c.deleted);
+
+export function calculateTotalRevenue(payments = []) {
+  return getValidPayments(payments).filter(p => p.status === 'PAID').reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+}
+
+export function calculatePendingAmount(payments = []) {
+  return getValidPayments(payments).filter(p => p.status === 'PENDING').reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+}
+
+export function calculateOverdueAmount(payments = []) {
+  return getValidPayments(payments).filter(p => p.status === 'OVERDUE').reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+}
+
+export function calculateTotalCommissions(commissions = []) {
+  return getValidCommissions(commissions).reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
+}
+
+export function calculatePendingCommissions(commissions = []) {
+  return getValidCommissions(commissions).filter(c => c.payout_status === 'PENDING').reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
+}
+
+export function calculatePaidCommissions(commissions = []) {
+  return getValidCommissions(commissions).filter(c => c.payout_status === 'PAID').reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
+}
+
 /** Restituisce la data di oggi "YYYY-MM-DD" nel fuso orario di Roma. */
 export function getTodayRomeString() {
   return ROME_DATE_FORMATTER.format(new Date());
@@ -30,8 +57,9 @@ export function getTodayRomeString() {
  */
 export function daysBetween(dateA, dateB) {
   if (!dateA || !dateB) return 0;
-  const a = new Date(`${dateA}T00:00:00+01:00`).getTime();
-  const b = new Date(`${dateB}T00:00:00+01:00`).getTime();
+  const a = Date.parse(`${dateA.substring(0, 10)}T00:00:00Z`);
+  const b = Date.parse(`${dateB.substring(0, 10)}T00:00:00Z`);
+  if (isNaN(a) || isNaN(b)) return 0;
   return Math.round((a - b) / (1000 * 60 * 60 * 24));
 }
 
@@ -126,8 +154,8 @@ export function calculateClientReliability(client, clientPayments = []) {
     }
   }
 
-  // Penalità sulla percentuale di pagamenti in ritardo
-  if (totalCount > 0 && (latePaymentsCount + currentOverdueCount) > 0) {
+  // Penalità sulla percentuale di pagamenti in ritardo (richiede uno storico di più di 2 pagamenti)
+  if (totalCount > 2 && (latePaymentsCount + currentOverdueCount) > 0) {
     const unpunctualRatio = (latePaymentsCount + currentOverdueCount) / totalCount;
     if (unpunctualRatio > 0.5) score -= 15;
   }
@@ -185,7 +213,9 @@ export function calculateNetWispMetrics(payments = [], commissions = []) {
   const totalCommissionsEarned = commissions.filter(c => !c.deleted).reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
   const pendingCommissions = commissions.filter(c => !c.deleted && c.payout_status === 'PENDING').reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
   const paidCommissions = commissions.filter(c => !c.deleted && c.payout_status === 'PAID').reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
-  const netWispRevenue = Math.max(0, grossRevenue - totalCommissionsEarned);
+  
+  // Bugfix: Net Wisp Revenue calcolato sottraendo per cassa (paidCommissions) invece che per competenza
+  const netWispRevenue = Math.max(0, grossRevenue - paidCommissions);
 
   return {
     grossRevenue,

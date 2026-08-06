@@ -2,7 +2,13 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { dbService } from '../dbService';
 import type { Client, Payment, Commission, MonthlyAnalyticsPoint, TopClient, CommissionByCollaborator } from '../types';
 import { BILLING_CYCLE_INFO } from '../types';
-import { computeBadPayersList } from '../financialEngine';
+import { 
+  computeBadPayersList, 
+  calculateTotalRevenue, 
+  calculateOverdueAmount,
+  calculateNetWispMetrics,
+  getValidPayments 
+} from '../financialEngine';
 import {
   TrendingUp,
   Users,
@@ -105,21 +111,20 @@ export const DashboardView: React.FC<Props> = ({ onNavigateToClients }) => {
   const mrr = clients
     .filter((c) => c.status === 'ACTIVE')
     .reduce((acc, c) => acc + (Number(c.monthly_fee) || 0) / (BILLING_CYCLE_INFO[c.billing_cycle]?.months || 1), 0);
-  const totalRevenue = payments
-    .filter(p => p.status === 'PAID')
-    .reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+    
+  const validPaymentsList = getValidPayments(payments);
+  const totalRevenue = calculateTotalRevenue(payments);
 
-  const pendingPayments = payments.filter(p => p.status === 'PENDING' || p.status === 'OVERDUE');
-  const overdueCount = payments.filter(p => p.status === 'OVERDUE').length;
-  const totalOverdueAmount = payments.filter(p => p.status === 'OVERDUE').reduce((a, b) => a + b.amount, 0);
+  const pendingPayments = validPaymentsList.filter(p => p.status === 'PENDING' || p.status === 'OVERDUE');
+  const overdueCount = validPaymentsList.filter(p => p.status === 'OVERDUE').length;
+  const totalOverdueAmount = calculateOverdueAmount(payments);
 
-  const pendingCommissions = commissions
-    .filter(c => c.payout_status === 'PENDING')
-    .reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
-  const totalCommissions = commissions.reduce((a, b) => a + b.amount, 0);
-  // Incasso netto: quanto resta in azienda dopo le provvigioni ai
-  // collaboratori (es. cliente 20€/mese, 5€ al collaboratore -> 15€ netti).
-  const netRevenue = totalRevenue - totalCommissions;
+  const netMetrics = calculateNetWispMetrics(payments, commissions);
+  const pendingCommissions = netMetrics.pendingCommissions;
+  const totalCommissions = netMetrics.totalCommissionsEarned;
+  
+  // Incasso netto coerente con l'engine finanziario (Cash-Basis)
+  const netRevenue = netMetrics.netWispRevenue;
 
   // Stato clienti: riusa lo stesso algoritmo di affidabilità del Modulo
   // Finanziario (Cattivi Pagatori) per una vista rapida in Dashboard, senza
@@ -130,7 +135,7 @@ export const DashboardView: React.FC<Props> = ({ onNavigateToClients }) => {
   const ritardatariCount = totalClients - puntualiCount;
   const puntualiPct = totalClients ? Math.round((puntualiCount / totalClients) * 100) : 0;
   const ritardatariPct = totalClients ? 100 - puntualiPct : 0;
-  const clientsAwaitingPayment = new Set(payments.filter((p) => p.status === 'PENDING').map((p) => p.client_id)).size;
+  const clientsAwaitingPayment = new Set(validPaymentsList.filter((p) => p.status === 'PENDING').map((p) => p.client_id)).size;
 
   const searchResults = quickSearch.trim()
     ? clients.filter(c =>
@@ -284,7 +289,7 @@ export const DashboardView: React.FC<Props> = ({ onNavigateToClients }) => {
             </div>
           </div>
           <div className="mt-4 flex items-center justify-between text-xs text-gray-500">
-            <span>Lordo € {totalRevenue.toFixed(2)} − Provvigioni € {totalCommissions.toFixed(2)}</span>
+            <span>Lordo € {totalRevenue.toFixed(2)} − Provv. Pagate € {netMetrics.paidCommissions.toFixed(2)}</span>
             {expandedMetric === 'revenue' ? <ChevronUp size={14} className="text-gray-400" /> : <ChevronDown size={14} className="text-gray-400" />}
           </div>
           <div className="mt-1.5"><DeltaBadge pct={revenueDeltaPct} /></div>

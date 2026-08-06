@@ -5,6 +5,12 @@ import type { Payment, Client, ClientLite, PaymentStatus, Commission } from '../
 import { Wallet, CheckCircle2, Clock, AlertTriangle, Plus, Search, ShieldAlert } from 'lucide-react';
 import { localDateString } from '../dateUtils';
 import { BadPayersView } from './BadPayersView';
+import { 
+  calculateOverdueAmount,
+  calculatePendingAmount,
+  calculateNetWispMetrics,
+  getValidPayments
+} from '../financialEngine';
 
 export const FinancialView: React.FC = () => {
   const { notify } = useToast();
@@ -117,21 +123,20 @@ export const FinancialView: React.FC = () => {
     loadData();
   };
 
-  const filteredPayments = payments.filter(p => {
+  const validPayments = getValidPayments(payments);
+  const filteredPayments = validPayments.filter(p => {
     if (statusFilter === 'ALL') return true;
     return p.status === statusFilter;
   });
 
-  const totalIncassato = payments.filter(p => p.status === 'PAID').reduce((a, b) => a + b.amount, 0);
-  const totalInsoluti = payments.filter(p => p.status === 'OVERDUE').reduce((a, b) => a + b.amount, 0);
-  const totalInAttesa = payments.filter(p => p.status === 'PENDING').reduce((a, b) => a + b.amount, 0);
-  // Incasso Netto = quanto incassato dai clienti meno le provvigioni generate
-  // (a chiunque siano destinate): es. cliente paga 20€/mese, 5€ al
-  // collaboratore -> 15€ restano in azienda. Le provvigioni non ancora
-  // liquidate sono comunque già un debito maturato, quindi si sottraggono
-  // a prescindere dallo stato di pagamento al collaboratore.
-  const totalCommissioni = commissions.reduce((a, b) => a + b.amount, 0);
-  const incassoNetto = totalIncassato - totalCommissioni;
+  const netMetrics = calculateNetWispMetrics(payments, commissions);
+  const totalIncassato = netMetrics.grossRevenue;
+  const totalInsoluti = calculateOverdueAmount(payments);
+  const totalInAttesa = calculatePendingAmount(payments);
+  const totalCommissioni = netMetrics.totalCommissionsEarned;
+  
+  // Incasso netto coerente con l'engine (sottrae provvigioni pagate)
+  const incassoNetto = netMetrics.netWispRevenue;
 
   return (
     <div className="space-y-6 pb-12">

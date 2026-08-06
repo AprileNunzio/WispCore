@@ -1,6 +1,34 @@
 import type { Client, Payment, BillingCycle } from './types';
 import { localDateString } from './dateUtils';
 
+// Helper centralizzati per filtrare i record eliminati e calcolare i totali in modo sicuro
+export const getValidPayments = (payments: Payment[] = []) => payments.filter(p => !p.deleted);
+export const getValidCommissions = <T extends { deleted?: boolean | number }>(commissions: T[] = []) => commissions.filter(c => !c.deleted);
+
+export function calculateTotalRevenue(payments: Payment[] = []): number {
+  return getValidPayments(payments).filter(p => p.status === 'PAID').reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+}
+
+export function calculatePendingAmount(payments: Payment[] = []): number {
+  return getValidPayments(payments).filter(p => p.status === 'PENDING').reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+}
+
+export function calculateOverdueAmount(payments: Payment[] = []): number {
+  return getValidPayments(payments).filter(p => p.status === 'OVERDUE').reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+}
+
+export function calculateTotalCommissions<T extends { amount: number; deleted?: boolean | number }>(commissions: T[] = []): number {
+  return getValidCommissions(commissions).reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
+}
+
+export function calculatePendingCommissions<T extends { amount: number; payout_status: string; deleted?: boolean | number }>(commissions: T[] = []): number {
+  return getValidCommissions(commissions).filter(c => c.payout_status === 'PENDING').reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
+}
+
+export function calculatePaidCommissions<T extends { amount: number; payout_status: string; deleted?: boolean | number }>(commissions: T[] = []): number {
+  return getValidCommissions(commissions).filter(c => c.payout_status === 'PAID').reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
+}
+
 export const BILLING_CYCLE_MONTHS: Record<BillingCycle, number> = {
   MONTHLY: 1,
   BIMONTHLY: 2,
@@ -31,8 +59,9 @@ export interface BadPayerClientInfo extends ReliabilityResult {
 
 export function daysBetween(dateA: string, dateB: string): number {
   if (!dateA || !dateB) return 0;
-  const a = new Date(`${dateA}T00:00:00+01:00`).getTime();
-  const b = new Date(`${dateB}T00:00:00+01:00`).getTime();
+  const a = Date.parse(`${dateA.substring(0, 10)}T00:00:00Z`);
+  const b = Date.parse(`${dateB.substring(0, 10)}T00:00:00Z`);
+  if (isNaN(a) || isNaN(b)) return 0;
   return Math.round((a - b) / (1000 * 60 * 60 * 24));
 }
 
@@ -47,6 +76,7 @@ export function calculateClientReliability(_client: Client, clientPayments: Paym
   let latePaymentsCount = 0;
   let currentOverdueCount = 0;
   let maxSingleDelayDays = 0;
+  let hasRecentSeriousDelay = false;
 
   for (const p of validPayments) {
     if (p.status === 'PAID') {
@@ -56,6 +86,13 @@ export function calculateClientReliability(_client: Client, clientPayments: Paym
           latePaymentsCount++;
           totalDaysLate += daysLate;
           maxSingleDelayDays = Math.max(maxSingleDelayDays, daysLate);
+
+          if (daysLate >= 45) {
+             const paymentTime = Date.parse(`${p.payment_date.substring(0,10)}T00:00:00Z`);
+             if (!isNaN(paymentTime) && (Date.now() - paymentTime < 180 * 24 * 60 * 60 * 1000)) {
+                 hasRecentSeriousDelay = true;
+             }
+          }
 
           if (daysLate <= 7) {
             score -= daysLate * 2;
@@ -71,6 +108,10 @@ export function calculateClientReliability(_client: Client, clientPayments: Paym
       const daysOverdue = daysBetween(today, p.due_date);
       maxSingleDelayDays = Math.max(maxSingleDelayDays, daysOverdue);
 
+      if (daysOverdue >= 45) {
+        hasRecentSeriousDelay = true; // È un insoluto ancora aperto e molto vecchio
+      }
+
       score -= 25;
       if (daysOverdue > 30) {
         score -= 25;
@@ -78,7 +119,8 @@ export function calculateClientReliability(_client: Client, clientPayments: Paym
     }
   }
 
-  if (totalCount > 0 && (latePaymentsCount + currentOverdueCount) > 0) {
+  // Richiede uno storico minimo (più di 2 pagamenti) per applicare la penale statistica sull'unpunctual ratio
+  if (totalCount > 2 && (latePaymentsCount + currentOverdueCount) > 0) {
     const unpunctualRatio = (latePaymentsCount + currentOverdueCount) / totalCount;
     if (unpunctualRatio > 0.5) score -= 15;
   }
@@ -90,7 +132,7 @@ export function calculateClientReliability(_client: Client, clientPayments: Paym
   let riskLabel = 'Eccellente';
   let riskBadgeColor: 'emerald' | 'yellow' | 'amber' | 'rose' = 'emerald';
 
-  if (finalScore < 50 || currentOverdueCount >= 2 || maxSingleDelayDays >= 45) {
+  if (finalScore < 50 || currentOverdueCount >= 2 || hasRecentSeriousDelay) {
     riskClass = 'BAD_PAYER';
     riskLabel = 'Cattivo Pagatore';
     riskBadgeColor = 'rose';
@@ -128,10 +170,14 @@ export function computeBadPayersList(clients: Client[], payments: Payment[]): Ba
 
   const list: BadPayerClientInfo[] = [];
 
+  const today = localDateString();
+
   for (const client of clients) {
     const clientPayments = paymentsByClient.get(client.id) || [];
     const rel = calculateClientReliability(client, clientPayments);
-    const overduePayments = clientPayments.filter(p => p.status === 'OVERDUE');
+    const overduePayments = clientPayments.filter(p => 
+      !p.deleted && (p.status === 'OVERDUE' || (p.status === 'PENDING' && p.due_date && p.due_date < today))
+    );
 
     list.push({
       ...rel,
@@ -153,11 +199,13 @@ export interface NetWispMetrics {
 }
 
 export function calculateNetWispMetrics(payments: Payment[] = [], commissions: { amount: number; payout_status: string; deleted?: boolean | number }[] = []): NetWispMetrics {
-  const grossRevenue = payments.filter(p => !p.deleted && p.status === 'PAID').reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
-  const totalCommissionsEarned = commissions.filter(c => !c.deleted).reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
-  const pendingCommissions = commissions.filter(c => !c.deleted && c.payout_status === 'PENDING').reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
-  const paidCommissions = commissions.filter(c => !c.deleted && c.payout_status === 'PAID').reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
-  const netWispRevenue = Math.max(0, grossRevenue - totalCommissionsEarned);
+  const grossRevenue = calculateTotalRevenue(payments);
+  const totalCommissionsEarned = calculateTotalCommissions(commissions);
+  const pendingCommissions = calculatePendingCommissions(commissions);
+  const paidCommissions = calculatePaidCommissions(commissions);
+  
+  // Bugfix: Net Wisp Revenue calcolato sottraendo per cassa (paidCommissions) invece che per competenza (totalCommissionsEarned)
+  const netWispRevenue = Math.max(0, grossRevenue - paidCommissions);
 
   return {
     grossRevenue,
