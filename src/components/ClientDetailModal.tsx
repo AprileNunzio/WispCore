@@ -130,7 +130,12 @@ export const ClientDetailModal: React.FC<Props> = ({ clientId, onBack, onEdit })
   const totalPaid = detail ? detail.payments.filter(p => p.status === 'PAID').reduce((acc, p) => acc + p.amount, 0) : 0;
   const totalPending = detail ? detail.payments.filter(p => p.status === 'PENDING').reduce((acc, p) => acc + p.amount, 0) : 0;
   const totalOverdue = detail ? detail.payments.filter(p => p.status === 'OVERDUE').reduce((acc, p) => acc + p.amount, 0) : 0;
-  const totalOwed = totalPending + totalOverdue;
+  // "In debito" deve riflettere solo gli insoluti REALI (scadenza già passata,
+  // status OVERDUE): un canone PENDING con scadenza futura (es. dicembre,
+  // quando siamo ad agosto) non è un debito, è semplicemente la prossima
+  // fattura ancora da emettere - includerlo qui segnalava clienti in regola
+  // come "in debito" per errore.
+  const totalOwed = totalOverdue;
   const isUpToDate = totalOwed === 0;
 
   // Indice Affidabilità: stessa formula usata in "Cattivi Pagatori" (Modulo
