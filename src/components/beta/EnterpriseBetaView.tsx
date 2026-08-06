@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { dbService } from '../../dbService';
 import { useToast, useConfirm } from '../Toast';
-import { Network, Server, KeyRound, Wifi, Activity, ShieldCheck, Database, Save, Plus, Trash2 } from 'lucide-react';
+import { Network, Server, KeyRound, Wifi, Activity, ShieldCheck, Database, Save, Plus, Trash2, Copy } from 'lucide-react';
 import type { BetaNasRouter, BetaIpamSubnet, BetaRadiusSettings, BetaCpeCredentials } from '../../types';
 
 export const EnterpriseBetaView: React.FC = () => {
@@ -299,7 +299,23 @@ export const EnterpriseBetaView: React.FC = () => {
 
             <div className="pt-4 border-t border-gray-100">
               <label className="block text-gray-700 font-bold mb-1">Codice UISP (Opzionale)</label>
-              <input type="text" value={cpeCredentials.uisp_key || ''} onChange={e => setCpeCredentials({...cpeCredentials, uisp_key: e.target.value})} className="w-full p-3 bg-white border border-gray-300 rounded-xl font-mono text-sm" placeholder="wss://[tuo-uisp]:443+key+..." />
+              <div className="flex items-center gap-2">
+                <input type="text" value={cpeCredentials.uisp_key || ''} onChange={e => setCpeCredentials({...cpeCredentials, uisp_key: e.target.value})} className="flex-1 p-3 bg-white border border-gray-300 rounded-xl font-mono text-sm" placeholder="wss://[tuo-uisp]:443+key+..." />
+                <button 
+                  onClick={() => {
+                    if (cpeCredentials.uisp_key) {
+                      navigator.clipboard.writeText(cpeCredentials.uisp_key);
+                      notify('Codice UISP copiato negli appunti!', 'success');
+                    } else {
+                      notify('Nessun codice da copiare', 'info');
+                    }
+                  }}
+                  className="bg-gray-100 hover:bg-gray-200 text-gray-700 p-3 rounded-xl border border-gray-300 transition-colors cursor-pointer"
+                  title="Copia codice UISP"
+                >
+                  <Copy size={20} />
+                </button>
+              </div>
               <p className="text-xs text-gray-500 mt-1">La UISP Key globale (URL wss) da incollare nelle nuove antenne per agganciarle al controller.</p>
             </div>
 
