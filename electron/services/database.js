@@ -1771,17 +1771,17 @@ export function saveBetaNasRouter(data, actor) {
     }
     
     params.push(data.id);
-    run(\UPDATE beta_nas_routers SET \ WHERE id = ?\, ...params);
+    run(`UPDATE beta_nas_routers SET ${updateFields.join(', ')} WHERE id = ?`, ...params);
     recordAudit(actor, 'UPDATE', 'beta_nas_router', data.id, null);
     persist();
     return data.id;
   } else {
     const uuidStr = crypto.randomUUID();
     const encPass = data.password ? encryptField('nas', 'password', data.password) : null;
-    const stmt = db.prepare(\
+    const stmt = db.prepare(`
       INSERT INTO beta_nas_routers (uuid, name, ip_address, api_port, username, password, radius_secret, active, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    \);
+    `);
     stmt.run([uuidStr, data.name, data.ip_address, data.api_port, data.username, encPass, data.radius_secret || null, data.active ? 1 : 0, now, now]);
     const id = getInsertId();
     stmt.free();
@@ -1804,19 +1804,19 @@ export function listBetaIpamSubnets() {
 export function saveBetaIpamSubnet(data, actor) {
   const now = new Date().toISOString();
   if (data.id) {
-    run(\
+    run(`
       UPDATE beta_ipam_subnets SET name = ?, cidr = ?, gateway = ?, vlan_id = ?, notes = ?, updated_at = ?
       WHERE id = ?
-    \, [data.name, data.cidr, data.gateway || null, data.vlan_id || null, data.notes || null, now, data.id]);
+    `, [data.name, data.cidr, data.gateway || null, data.vlan_id || null, data.notes || null, now, data.id]);
     recordAudit(actor, 'UPDATE', 'beta_ipam_subnet', data.id, null);
     persist();
     return data.id;
   } else {
     const uuidStr = crypto.randomUUID();
-    const stmt = db.prepare(\
+    const stmt = db.prepare(`
       INSERT INTO beta_ipam_subnets (uuid, name, cidr, gateway, vlan_id, notes, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    \);
+    `);
     stmt.run([uuidStr, data.name, data.cidr, data.gateway || null, data.vlan_id || null, data.notes || null, now, now]);
     const id = getInsertId();
     stmt.free();
