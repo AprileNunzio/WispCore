@@ -1,6 +1,6 @@
 import React from 'react';
 import type { Payment } from '../types';
-import { MONTH_LABELS } from '../dateUtils';
+import { MONTH_LABELS_FULL } from '../dateUtils';
 
 interface Props {
   payments: Payment[]; // già filtrati per il singolo cliente
@@ -19,7 +19,7 @@ interface Props {
 export const ClientYearStrip: React.FC<Props> = ({ payments, year }) => {
   const yearPrefix = String(year);
 
-  const monthCells = MONTH_LABELS.map((label, idx) => {
+  const monthCells = MONTH_LABELS_FULL.map((label, idx) => {
     const monthKey = `${yearPrefix}-${String(idx + 1).padStart(2, '0')}`;
     const monthPayments = payments.filter((p) => p.payment_type === 'RECURRING' && p.due_date?.startsWith(monthKey));
 
@@ -42,13 +42,17 @@ export const ClientYearStrip: React.FC<Props> = ({ payments, year }) => {
   });
 
   return (
-    <div className="flex items-center gap-1">
-      {monthCells.map((m, idx) => (
-        <div key={idx} className="flex-1 flex flex-col items-center gap-0.5" title={m.title}>
-          <div className={`w-full h-4 rounded border ${m.colorClass}`} />
-          <span className="text-[8px] text-gray-400 font-mono">{m.label[0]}</span>
-        </div>
-      ))}
+    // overflow-x-auto: con i nomi per esteso la striscia può superare la larghezza
+    // della scheda su finestre strette - meglio scorrerla che troncare i nomi.
+    <div className="overflow-x-auto">
+      <div className="flex items-center gap-1 min-w-max">
+        {monthCells.map((m, idx) => (
+          <div key={idx} className="w-14 shrink-0 flex flex-col items-center gap-0.5" title={m.title}>
+            <div className={`w-full h-4 rounded border ${m.colorClass}`} />
+            <span className="text-[9px] text-gray-500 font-mono whitespace-nowrap">{m.label}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 };

@@ -256,6 +256,26 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
     }
   };
 
+  // Cliente selezionato: la scheda dettagliata occupa l'intera vista al posto
+  // dell'elenco (non più un popup), con un pulsante "Torna all'elenco".
+  if (detailClientId !== null) {
+    return (
+      <>
+        <ClientDetailModal clientId={detailClientId} onBack={() => setDetailClientId(null)} onEdit={handleEdit} />
+        {showModal && (
+          <ClientFormModal
+            client={editingClient as Client}
+            collaborators={collaborators}
+            plans={plans}
+            networkNodes={networkNodes}
+            onSave={handleSavePayload}
+            onClose={() => setShowModal(false)}
+          />
+        )}
+      </>
+    );
+  }
+
   return (
     <div className="space-y-6 pb-12">
       {/* Top Bar Widescreen */}
@@ -524,10 +544,6 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
           ))
         )}
       </div>
-
-      {detailClientId !== null && (
-        <ClientDetailModal clientId={detailClientId} onClose={() => setDetailClientId(null)} />
-      )}
 
       {showModal && (
         <ClientFormModal

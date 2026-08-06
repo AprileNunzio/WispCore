@@ -2,9 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { dbService } from '../dbService';
 import { useToast } from './Toast';
 import { ClientPaymentCalendar } from './ClientPaymentCalendar';
-import type { ClientDetail, ClientStatus } from '../types';
+import type { Client, ClientDetail, ClientStatus } from '../types';
 import {
-  X,
+  ArrowLeft,
   Wallet,
   AlertTriangle,
   CheckCircle2,
@@ -19,7 +19,8 @@ import {
   ShieldCheck,
   TrendingDown,
   TrendingUp,
-  Receipt
+  Receipt,
+  Edit3,
 } from 'lucide-react';
 
 const STATUS_LABELS: Record<ClientStatus, string> = {
@@ -38,10 +39,19 @@ const STATUS_BADGE: Record<ClientStatus, string> = {
 
 interface Props {
   clientId: number;
-  onClose: () => void;
+  onBack: () => void;
+  onEdit?: (client: Client) => void;
 }
 
-export const ClientDetailModal: React.FC<Props> = ({ clientId, onClose }) => {
+/**
+ * Pagina cliente a tutto schermo (non un popup): sostituisce l'elenco in
+ * Gestione Anagrafica quando si clicca su un cliente, con un pulsante
+ * "Torna all'elenco" al posto della X di chiusura. Stessa scelta di design
+ * delle altre viste principali (FinancialView, ScadenzeView...), così da
+ * poter scorrere liberamente tutte le informazioni senza il vincolo di
+ * altezza di una finestra modale.
+ */
+export const ClientDetailModal: React.FC<Props> = ({ clientId, onBack, onEdit }) => {
   const [detail, setDetail] = useState<ClientDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const { notify } = useToast();
@@ -75,37 +85,43 @@ export const ClientDetailModal: React.FC<Props> = ({ clientId, onClose }) => {
   const isUpToDate = totalOwed === 0;
 
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-md z-50 flex items-center justify-center p-4">
-      <div className="w-full max-w-4xl glass-panel-glow bg-white rounded-3xl p-6 border border-gray-200 max-h-[92vh] overflow-y-auto shadow-2xl">
-        
-        {/* Header Modale */}
-        <div className="flex items-center justify-between mb-5 pb-3 border-b border-gray-200">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 border border-blue-200 flex items-center justify-center font-bold text-sm shrink-0">
-              {detail ? `${detail.client.first_name[0]}${detail.client.last_name[0]}` : <User size={20} />}
-            </div>
-            <div>
-              <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                <span>{loading ? 'Caricamento...' : `${detail?.client.first_name} ${detail?.client.last_name}`}</span>
-                {detail && (
-                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${STATUS_BADGE[detail.client.status]}`}>
-                    {STATUS_LABELS[detail.client.status]}
-                  </span>
-                )}
-              </h2>
-              <p className="text-xs text-gray-400 font-mono">Codice Cliente: WISP-00{clientId} • CF/PIVA: {detail?.client.tax_code || 'N/D'}</p>
-            </div>
-          </div>
-          
-          <button onClick={onClose} className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-xl cursor-pointer transition-colors">
-            <X size={20} />
+    <div className="space-y-6 pb-12">
+      {/* Header pagina */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white/80 glass-panel rounded-2xl p-6 border border-gray-200">
+        <div className="flex items-center gap-3">
+          <button onClick={onBack} className="p-2.5 text-gray-500 hover:text-gray-900 bg-gray-100 hover:bg-gray-200 rounded-xl cursor-pointer transition-colors shrink-0" title="Torna all'elenco clienti">
+            <ArrowLeft size={18} />
           </button>
+          <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 border border-blue-200 flex items-center justify-center font-bold text-sm shrink-0">
+            {detail ? `${detail.client.first_name[0]}${detail.client.last_name[0]}` : <User size={20} />}
+          </div>
+          <div>
+            <h1 className="text-lg font-bold text-gray-900 flex items-center gap-2 flex-wrap">
+              <span>{loading ? 'Caricamento...' : `${detail?.client.first_name} ${detail?.client.last_name}`}</span>
+              {detail && (
+                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${STATUS_BADGE[detail.client.status]}`}>
+                  {STATUS_LABELS[detail.client.status]}
+                </span>
+              )}
+            </h1>
+            <p className="text-xs text-gray-400 font-mono">Codice Cliente: WISP-00{clientId} • CF/PIVA: {detail?.client.tax_code || 'N/D'}</p>
+          </div>
         </div>
 
-        {loading || !detail ? (
-          <div className="text-center text-gray-400 py-16 text-sm">Caricamento scheda e portafoglio cliente...</div>
-        ) : (
-          <div className="space-y-6">
+        {detail && onEdit && (
+          <button
+            onClick={() => onEdit(detail.client)}
+            className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-xl shadow-lg shadow-blue-600/20 flex items-center justify-center gap-1.5 cursor-pointer transition-all shrink-0"
+          >
+            <Edit3 size={14} /> Modifica Cliente
+          </button>
+        )}
+      </div>
+
+      {loading || !detail ? (
+        <div className="glass-panel rounded-2xl p-16 text-center text-gray-400 text-sm border border-gray-200">Caricamento scheda e portafoglio cliente...</div>
+      ) : (
+        <div className="space-y-6">
 
             {/* SEZIONE PORTAFOGLIO & ESTRATTO CONTO CLIENTE */}
             <div className="bg-gradient-to-br from-gray-900 via-slate-900 to-gray-800 p-5 rounded-2xl border border-gray-800 text-white shadow-xl space-y-4">
@@ -247,7 +263,7 @@ export const ClientDetailModal: React.FC<Props> = ({ clientId, onClose }) => {
               </div>
             )}
 
-            {/* Calendario Mensile Pagamenti */}
+            {/* Calendario Annuale Pagamenti */}
             <ClientPaymentCalendar payments={detail.payments} />
 
             {/* Tabella Estratto Conto Movimenti */}
@@ -342,9 +358,8 @@ export const ClientDetailModal: React.FC<Props> = ({ clientId, onClose }) => {
               </div>
             )}
 
-          </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 };

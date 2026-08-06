@@ -12,6 +12,13 @@ const ROME_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', { timeZone: APP_TIM
 
 export const MONTH_LABELS = ['Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
 
+// Nomi per esteso: usati dove le iniziali/abbreviazioni sarebbero ambigue
+// (es. "G" per Gennaio e Giugno, "M" per Marzo e Maggio, "A" per Aprile e Agosto).
+export const MONTH_LABELS_FULL = [
+  'Gennaio', 'Febbraio', 'Marzo', 'Aprile', 'Maggio', 'Giugno',
+  'Luglio', 'Agosto', 'Settembre', 'Ottobre', 'Novembre', 'Dicembre',
+];
+
 /** Data di calendario "YYYY-MM-DD" nel fuso orario di Roma di un dato istante (default: adesso). */
 export function localDateString(date: Date = new Date()): string {
   return ROME_DATE_FORMATTER.format(date); // 'en-CA' formatta già come YYYY-MM-DD
