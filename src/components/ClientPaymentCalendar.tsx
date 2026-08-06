@@ -1,10 +1,11 @@
 import React, { useMemo, useState } from 'react';
 import type { Payment } from '../types';
 import { MONTH_LABELS_FULL, localDateString } from '../dateUtils';
-import { ChevronLeft, ChevronRight, CalendarDays } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CalendarDays, Flag } from 'lucide-react';
 
 interface Props {
   payments: Payment[];
+  contractStartDate?: string; // "YYYY-MM-DD": evidenzia il mese di inizio contratto, utile quando differisce dal primo canone (giorni omaggio, ecc.)
 }
 
 const PAYMENT_TYPE_LABELS: Record<string, string> = {
@@ -21,7 +22,7 @@ const PAYMENT_TYPE_LABELS: Record<string, string> = {
  * a un solo cliente. Il mese viene attribuito in base alla data di scadenza
  * (due_date) dei pagamenti RECURRING.
  */
-export const ClientPaymentCalendar: React.FC<Props> = ({ payments }) => {
+export const ClientPaymentCalendar: React.FC<Props> = ({ payments, contractStartDate }) => {
   const [year, setYear] = useState(() => Number(localDateString().slice(0, 4)));
   const [selectedMonth, setSelectedMonth] = useState<number | null>(null); // 1-12
 
@@ -32,6 +33,7 @@ export const ClientPaymentCalendar: React.FC<Props> = ({ payments }) => {
       const monthKey = `${yearPrefix}-${String(monthNum).padStart(2, '0')}`;
       const recurring = payments.filter((p) => p.payment_type === 'RECURRING' && p.due_date?.startsWith(monthKey));
       const allInMonth = payments.filter((p) => p.due_date?.startsWith(monthKey) || (p.payment_date || '').startsWith(monthKey));
+      const isContractStartMonth = !!contractStartDate && contractStartDate.startsWith(monthKey);
 
       let colorClass = 'bg-gray-50 border-gray-200 text-gray-400';
       let statusLabel = 'Nessuna scadenza';
@@ -48,9 +50,12 @@ export const ClientPaymentCalendar: React.FC<Props> = ({ payments }) => {
           statusLabel = `In attesa — € ${total.toFixed(2)}`;
         }
       }
-      return { monthNum, label, colorClass, statusLabel, payments: allInMonth };
+      if (isContractStartMonth) {
+        statusLabel = `Inizio contratto (${contractStartDate})${statusLabel !== 'Nessuna scadenza' ? ` • ${statusLabel}` : ''}`;
+      }
+      return { monthNum, label, colorClass, statusLabel, payments: allInMonth, isContractStartMonth };
     });
-  }, [payments, year]);
+  }, [payments, year, contractStartDate]);
 
   const selected = selectedMonth ? monthCells[selectedMonth - 1] : null;
 
@@ -78,8 +83,11 @@ export const ClientPaymentCalendar: React.FC<Props> = ({ payments }) => {
               key={m.monthNum}
               onClick={() => setSelectedMonth(selectedMonth === m.monthNum ? null : m.monthNum)}
               title={m.statusLabel}
-              className={`p-2.5 rounded-xl border text-left cursor-pointer transition-all ${m.colorClass} ${selectedMonth === m.monthNum ? 'ring-2 ring-gray-900' : ''}`}
+              className={`relative p-2.5 rounded-xl border text-left cursor-pointer transition-all ${m.colorClass} ${selectedMonth === m.monthNum ? 'ring-2 ring-gray-900' : ''} ${m.isContractStartMonth ? 'ring-2 ring-blue-500' : ''}`}
             >
+              {m.isContractStartMonth && (
+                <Flag size={11} className="absolute top-1.5 right-1.5 text-blue-600" />
+              )}
               <div className="text-xs font-bold">{m.label}</div>
               <div className="text-[10px] mt-0.5 opacity-80 truncate">{m.statusLabel}</div>
             </button>
@@ -90,6 +98,9 @@ export const ClientPaymentCalendar: React.FC<Props> = ({ payments }) => {
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded bg-emerald-100 border border-emerald-300 inline-block" /> Saldato</span>
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded bg-amber-100 border border-amber-300 inline-block" /> In attesa</span>
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded bg-rose-100 border border-rose-300 inline-block" /> Insoluto</span>
+          {contractStartDate && (
+            <span className="flex items-center gap-1"><Flag size={11} className="text-blue-600" /> Inizio contratto</span>
+          )}
         </div>
 
         {selected && (

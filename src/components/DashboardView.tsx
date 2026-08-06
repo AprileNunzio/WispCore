@@ -306,7 +306,10 @@ export const DashboardView: React.FC<Props> = ({ onNavigateToClients }) => {
             </div>
           </div>
           <div className="mt-4 text-xs text-gray-500 flex items-center justify-between">
-            <span>Totale in sospeso: € {pendingPayments.reduce((a,b)=>a+b.amount, 0).toFixed(2)}</span>
+            {/* Solo insoluti reali (OVERDUE): sommarci anche i PENDING futuri
+                gonfierebbe questo importo con canoni non ancora scaduti,
+                proprio accanto a un conteggio "Scaduti" che invece è corretto. */}
+            <span>Totale insoluto: € {totalOverdueAmount.toFixed(2)}</span>
             {expandedMetric === 'overdue' ? <ChevronUp size={14} className="text-gray-400" /> : <ChevronDown size={14} className="text-gray-400" />}
           </div>
           <div className="mt-1.5"><DeltaBadge pct={overdueDeltaPct} goodWhenUp={false} /></div>

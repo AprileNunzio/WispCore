@@ -1,9 +1,48 @@
 import type { Client, Payment, BillingCycle } from './types';
 import { localDateString } from './dateUtils';
+import { BILLING_CYCLE_INFO } from './types';
 
 // Helper centralizzati per filtrare i record eliminati e calcolare i totali in modo sicuro
 export const getValidPayments = (payments: Payment[] = []) => payments.filter(p => !p.deleted);
 export const getValidCommissions = <T extends { deleted?: boolean | number }>(commissions: T[] = []) => commissions.filter(c => !c.deleted);
+
+/**
+ * Somma mesi a una data "YYYY-MM-DD" gestendo il fine mese (es. 31 gennaio +1
+ * mese -> 28/29 febbraio, mai un rollover accidentale a marzo). Specchio di
+ * addMonthsToDateString in electron/services/financialEngine.js: usato lato
+ * renderer solo per calcoli di anteprima (es. la lista periodi dello
+ * strumento "Genera Storico Pagamenti"), mai per scrivere sul database.
+ */
+export function addMonthsToDateString(dateStr: string, monthsToAdd: number): string {
+  if (!dateStr) return localDateString();
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const targetYear = y + Math.floor((m - 1 + monthsToAdd) / 12);
+  const targetMonth = ((m - 1 + monthsToAdd) % 12) + 1;
+  const maxDaysInTargetMonth = new Date(Date.UTC(targetYear, targetMonth, 0)).getUTCDate();
+  const targetDay = Math.min(d, maxDaysInTargetMonth);
+  return `${targetYear}-${String(targetMonth).padStart(2, '0')}-${String(targetDay).padStart(2, '0')}`;
+}
+
+/**
+ * Elenco delle scadenze del canone ricorrente comprese tra `startDate`
+ * (inclusa) e `endDateExclusive` (esclusa), al passo del ciclo di
+ * fatturazione del cliente. Usato per proporre all'operatore le scadenze
+ * passate mancanti quando registra clienti storici o sposta indietro la data
+ * di inizio contratto - non scrive nulla da sé, restituisce solo la lista.
+ */
+export function listRecurringPeriodsBetween(startDate: string, endDateExclusive: string, billingCycle: BillingCycle): string[] {
+  if (!startDate || !endDateExclusive) return [];
+  const months = BILLING_CYCLE_INFO[billingCycle]?.months || 1;
+  const dates: string[] = [];
+  let cursor = startDate;
+  let guard = 0; // limite di sicurezza: evita loop infiniti su input assurdi (es. data di fine prima dell'inizio)
+  while (cursor < endDateExclusive && guard < 240) {
+    dates.push(cursor);
+    cursor = addMonthsToDateString(cursor, months);
+    guard++;
+  }
+  return dates;
+}
 
 export function calculateTotalRevenue(payments: Payment[] = []): number {
   return getValidPayments(payments).filter(p => p.status === 'PAID').reduce((acc, p) => acc + (Number(p.amount) || 0), 0);

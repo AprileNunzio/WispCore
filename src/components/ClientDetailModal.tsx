@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { dbService } from '../dbService';
 import { useToast, useConfirm } from './Toast';
 import { ClientPaymentCalendar } from './ClientPaymentCalendar';
+import { ClientHistoryBackfillModal } from './ClientHistoryBackfillModal';
 import { calculateClientReliability } from '../financialEngine';
 import type { Client, ClientDetail, ClientStatus, Payment, PaymentType } from '../types';
 import {
@@ -64,6 +65,7 @@ export const ClientDetailModal: React.FC<Props> = ({ clientId, onBack, onEdit })
   // Modale di correzione (importo/scadenza/tipo) per rimediare a un errore di registrazione,
   // riusabile qui sull'estratto conto esattamente come nel Modulo Finanziario.
   const [editModal, setEditModal] = useState<{ paymentId: number; amount: number; due_date: string; payment_type: PaymentType } | null>(null);
+  const [showBackfillModal, setShowBackfillModal] = useState(false);
 
   const loadDetail = () => {
     dbService.getClientDetail(clientId).then((d) => {
@@ -363,7 +365,16 @@ export const ClientDetailModal: React.FC<Props> = ({ clientId, onBack, onEdit })
             )}
 
             {/* Calendario Annuale Pagamenti */}
-            <ClientPaymentCalendar payments={detail.payments} />
+            <div className="flex items-center justify-end -mb-2">
+              <button
+                onClick={() => setShowBackfillModal(true)}
+                className="text-xs bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-3 py-1.5 rounded-lg font-semibold cursor-pointer inline-flex items-center gap-1.5"
+                title="Registra scadenze passate mancanti (es. import cliente storico, o data inizio contratto spostata indietro)"
+              >
+                <History size={13} /> Genera Storico Pagamenti
+              </button>
+            </div>
+            <ClientPaymentCalendar payments={detail.payments} contractStartDate={detail.client.contract_start_date} />
 
             {/* Tabella Estratto Conto Movimenti */}
             <div>
@@ -536,6 +547,15 @@ export const ClientDetailModal: React.FC<Props> = ({ clientId, onBack, onEdit })
             </div>
           </div>
         </div>
+      )}
+
+      {showBackfillModal && detail && (
+        <ClientHistoryBackfillModal
+          client={detail.client}
+          payments={detail.payments}
+          onClose={() => setShowBackfillModal(false)}
+          onGenerated={loadDetail}
+        />
       )}
     </div>
   );
