@@ -154,7 +154,7 @@ export async function syncTemplatesToMeta(templates) {
 
       // Meta richiede un "example" con valori plausibili per ogni placeholder
       // posizionale, usato dai revisori umani per capire il contesto d'uso.
-      const exampleValues = ['Mario Rossi', 'Canone Ricorrente', '29.90', '15/09/2026'];
+      const exampleValues = ['Mario Rossi', 'Canone Ricorrente', '29.90', '15/09/2026', 'Team Tecnico WISP'];
       const paramCount = (t.body_text.match(/\{\{\d+\}\}/g) || []).length;
 
       const created = await graphFetch(

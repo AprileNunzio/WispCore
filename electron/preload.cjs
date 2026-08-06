@@ -85,6 +85,10 @@ contextBridge.exposeInMainWorld('wispcore', {
   email: {
     sendPaymentReminder: (paymentId, templateId) => invoke('email:sendPaymentReminder', { paymentId, templateId }),
   },
+  company: {
+    getSettings: () => invoke('company:getSettings'),
+    setSettings: (data) => invoke('company:setSettings', data),
+  },
   whatsapp: {
     getSettings: () => invoke('whatsapp:getSettings'),
     setSettings: (settings) => invoke('whatsapp:setSettings', settings),

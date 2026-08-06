@@ -368,6 +368,17 @@ export interface SmtpSettings {
   fromEmail: string;
 }
 
+export interface CompanySettings {
+  name: string;
+  vatNumber: string;
+  taxCode: string;
+  address: string;
+  phone: string;
+  email: string;
+  website: string;
+  iban: string;
+}
+
 export interface WhatsappSettings {
   enabled: boolean;
   phoneNumberId: string;

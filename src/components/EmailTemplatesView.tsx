@@ -4,7 +4,8 @@ import { useToast, useConfirm } from './Toast';
 import type { EmailTemplate } from '../types';
 import { MailPlus, Edit3, Trash2, X, Variable } from 'lucide-react';
 
-const VARIABLES = ['nome_cliente', 'importo', 'scadenza', 'tipo_pagamento'];
+// azienda_* valorizzate dai Dati Azienda in Impostazioni (nome, piva, indirizzo, telefono, email, iban).
+const VARIABLES = ['nome_cliente', 'importo', 'scadenza', 'tipo_pagamento', 'azienda_nome', 'azienda_piva', 'azienda_indirizzo', 'azienda_telefono', 'azienda_email', 'azienda_iban'];
 
 const DEFAULT_TEMPLATE: Partial<EmailTemplate> = {
   name: 'Sollecito di pagamento',

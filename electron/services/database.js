@@ -479,24 +479,25 @@ function seedDefaultEmailTemplatesIfNeeded() {
 // Template WhatsApp Business precompilati (categoria Meta "UTILITY": comunicazioni
 // transazionali legate a un servizio già attivo, non promozionali - questo evita la
 // richiesta di un opt-in marketing separato ed è la categoria corretta per solleciti
-// e promemoria di scadenza). Placeholder posizionali {{1}}..{{4}} nell'ordine in cui
+// e promemoria di scadenza). Placeholder posizionali {{1}}..{{5}} nell'ordine in cui
 // vengono valorizzati da whatsapp:sendPaymentReminder: nome cliente, tipo pagamento,
-// importo, data di scadenza. Il testo va comunque approvato da Meta prima dell'uso:
-// vedi whatsapp.js -> syncTemplatesToMeta().
+// importo, data di scadenza, nome società (da Impostazioni -> Dati Azienda, con
+// fallback "Team Tecnico WISP" se non compilato). Il testo va comunque approvato da
+// Meta prima dell'uso: vedi whatsapp.js -> syncTemplatesToMeta().
 const DEFAULT_WHATSAPP_TEMPLATES = [
   {
     template_key: 'promemoria_scadenza_wispcore',
     display_name: 'Promemoria Scadenza Imminente',
     category: 'UTILITY',
     language: 'it',
-    body_text: 'Gentile {{1}}, Le ricordiamo che il pagamento {{2}} di € {{3}} è in scadenza il giorno {{4}}. La invitiamo a regolarizzare la posizione entro tale data per garantire la continuità del servizio. Team Tecnico WISP.',
+    body_text: 'Gentile {{1}}, Le ricordiamo che il pagamento {{2}} di € {{3}} è in scadenza il giorno {{4}}. La invitiamo a regolarizzare la posizione entro tale data per garantire la continuità del servizio. {{5}}.',
   },
   {
     template_key: 'sollecito_pagamento_wispcore',
     display_name: 'Sollecito Pagamento Scaduto',
     category: 'UTILITY',
     language: 'it',
-    body_text: 'Gentile {{1}}, il pagamento {{2}} di € {{3}}, con scadenza il {{4}}, risulta ancora non saldato. La invitiamo a provvedere quanto prima per evitare eventuali limitazioni del servizio. Per chiarimenti contatti il nostro ufficio amministrativo. Team Tecnico WISP.',
+    body_text: 'Gentile {{1}}, il pagamento {{2}} di € {{3}}, con scadenza il {{4}}, risulta ancora non saldato. La invitiamo a provvedere quanto prima per evitare eventuali limitazioni del servizio. Per chiarimenti contatti il nostro ufficio amministrativo. {{5}}.',
   },
 ];
 

@@ -22,8 +22,9 @@ import {
   AlertTriangle,
   MessageCircle,
   RotateCw,
+  Building2,
 } from 'lucide-react';
-import type { AppPaths, BackupInfo, SecondaryBackupSettings, SyncSettings, AuditLogEntry, UpdateCheckResult, SmtpSettings, WhatsappSettings, WhatsappTemplate } from '../types';
+import type { AppPaths, BackupInfo, SecondaryBackupSettings, SyncSettings, AuditLogEntry, UpdateCheckResult, SmtpSettings, WhatsappSettings, WhatsappTemplate, CompanySettings } from '../types';
 
 export const SettingsView: React.FC = () => {
   const { notify } = useToast();
@@ -55,9 +56,18 @@ export const SettingsView: React.FC = () => {
   const [orgKeyInput, setOrgKeyInput] = useState('');
   const [generatedOrgKey, setGeneratedOrgKey] = useState<string | null>(null);
 
+  const [company, setCompany] = useState<CompanySettings | null>(null);
+  const [companyForm, setCompanyForm] = useState<CompanySettings>({ name: '', vatNumber: '', taxCode: '', address: '', phone: '', email: '', website: '', iban: '' });
+  const [savingCompany, setSavingCompany] = useState(false);
+
   const [smtp, setSmtp] = useState<SmtpSettings | null>(null);
   const [smtpForm, setSmtpForm] = useState({ host: '', port: 587, secure: false, user: '', password: '', fromName: 'WispCore', fromEmail: '' });
   const [testingSmtp, setTestingSmtp] = useState(false);
+
+  // I backup giornalieri (30gg) + mensili (12) possono arrivare a ~40 righe:
+  // paginati per non allungare a dismisura la pagina Impostazioni.
+  const BACKUPS_PAGE_SIZE = 8;
+  const [backupPage, setBackupPage] = useState(0);
 
   const [whatsapp, setWhatsapp] = useState<WhatsappSettings | null>(null);
   const [whatsappForm, setWhatsappForm] = useState({ phoneNumberId: '', wabaId: '', accessToken: '', displayName: '' });
@@ -94,7 +104,7 @@ export const SettingsView: React.FC = () => {
   };
 
   const loadAll = async () => {
-    const [v, p, b, log, s, sm, secBackup, wa, waTemplates] = await Promise.all([
+    const [v, p, b, log, s, sm, secBackup, wa, waTemplates, comp] = await Promise.all([
       dbService.getAppVersion(),
       dbService.getAppPaths(),
       dbService.getBackupsList(),
@@ -104,6 +114,7 @@ export const SettingsView: React.FC = () => {
       dbService.getSecondaryBackupSettings(),
       dbService.getWhatsappSettings(),
       dbService.getWhatsappTemplates(),
+      dbService.getCompanySettings(),
     ]);
     setAppVersion(v);
     setPaths(p);
@@ -118,6 +129,21 @@ export const SettingsView: React.FC = () => {
     setWhatsapp(wa);
     setWhatsappForm({ phoneNumberId: wa.phoneNumberId, wabaId: wa.wabaId, accessToken: '', displayName: wa.displayName });
     setWhatsappTemplates(waTemplates);
+    setCompany(comp);
+    setCompanyForm(comp);
+  };
+
+  const handleSaveCompany = async () => {
+    setSavingCompany(true);
+    try {
+      const updated = await dbService.setCompanySettings(companyForm);
+      setCompany(updated);
+      notify('Dati società salvati.', 'success');
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Errore nel salvataggio.', 'error');
+    } finally {
+      setSavingCompany(false);
+    }
   };
 
   const handlePickSecondaryDir = async () => {
@@ -217,6 +243,15 @@ export const SettingsView: React.FC = () => {
     }
   };
 
+  // Meta richiede placeholder posizionali numerati ({{1}}, {{2}}...) nel corpo
+  // del template - obbligo tecnico della Cloud API, non modificabile. Per
+  // l'operatore però sono illeggibili: qui li traduciamo solo a video con il
+  // nome della variabile che verrà davvero sostituita (vedi whatsapp:sendPaymentReminder
+  // in electron/ipc/handlers.js per l'ordine reale dei parametri inviati).
+  const WHATSAPP_PLACEHOLDER_NAMES = ['nome_cliente', 'tipo_pagamento', 'importo', 'scadenza', 'nome_azienda'];
+  const humanizeWhatsappBody = (bodyText: string) =>
+    bodyText.replace(/\{\{(\d+)\}\}/g, (_, idx) => `{{${WHATSAPP_PLACEHOLDER_NAMES[Number(idx) - 1] || idx}}}`);
+
   const whatsappStatusBadge = (status: WhatsappTemplate['meta_status']) => {
     switch (status) {
       case 'APPROVED': return <span className="text-[11px] px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full font-semibold">Approvato</span>;
@@ -246,6 +281,7 @@ export const SettingsView: React.FC = () => {
     try {
       await dbService.runBackupNow();
       notify('Backup creato con successo.', 'success');
+      setBackupPage(0); // il nuovo backup è il più recente: torna alla prima pagina per vederlo
       loadAll();
     } catch (err) {
       notify(err instanceof Error ? err.message : 'Errore durante il backup.', 'error');
@@ -525,7 +561,7 @@ export const SettingsView: React.FC = () => {
                 {backups.length === 0 ? (
                   <tr><td colSpan={5} className="p-5 text-center text-gray-400">Nessun backup ancora creato.</td></tr>
                 ) : (
-                  backups.map((b) => (
+                  backups.slice(backupPage * BACKUPS_PAGE_SIZE, (backupPage + 1) * BACKUPS_PAGE_SIZE).map((b) => (
                     <tr key={b.fileName} className="hover:bg-gray-50">
                       <td className="p-2.5 font-mono">{b.fileName}</td>
                       <td className="p-2.5 font-mono text-gray-400">{new Date(b.createdAt).toLocaleString('it-IT')}</td>
@@ -554,6 +590,29 @@ export const SettingsView: React.FC = () => {
               </tbody>
             </table>
           </div>
+
+          {backups.length > BACKUPS_PAGE_SIZE && (
+            <div className="flex items-center justify-between text-xs text-gray-500 pt-1">
+              <span>{backups.length} backup totali</span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setBackupPage((p) => Math.max(0, p - 1))}
+                  disabled={backupPage === 0}
+                  className="px-2.5 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold cursor-pointer disabled:opacity-40"
+                >
+                  Precedente
+                </button>
+                <span className="font-mono">Pagina {backupPage + 1} di {Math.ceil(backups.length / BACKUPS_PAGE_SIZE)}</span>
+                <button
+                  onClick={() => setBackupPage((p) => (p + 1) * BACKUPS_PAGE_SIZE < backups.length ? p + 1 : p)}
+                  disabled={(backupPage + 1) * BACKUPS_PAGE_SIZE >= backups.length}
+                  className="px-2.5 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold cursor-pointer disabled:opacity-40"
+                >
+                  Successiva
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* --- Secondary backup (external directory / NAS) --- */}
@@ -760,6 +819,78 @@ export const SettingsView: React.FC = () => {
           </div>
         </div>
 
+        {/* --- Dati Azienda --- */}
+        <div className="glass-panel p-6 rounded-2xl border border-gray-200 space-y-4 lg:col-span-2">
+          <div className="flex items-center gap-3">
+            <div className="p-3 bg-slate-100 text-slate-700 rounded-xl border border-slate-200">
+              <Building2 size={22} />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-gray-900">Dati Azienda</h3>
+              <p className="text-sm text-gray-500">Usati per firmare email e WhatsApp con il nome reale invece del generico "Team Tecnico WISP" - base anche per future fatture</p>
+            </div>
+            {company?.name && (
+              <span className="ml-auto text-[11px] px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full font-semibold shrink-0">Impostati</span>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+            <div>
+              <label className="text-gray-500 block mb-1">Ragione Sociale</label>
+              <input type="text" placeholder="es. Alynet Srl" value={companyForm.name}
+                onChange={(e) => setCompanyForm({ ...companyForm, name: e.target.value })}
+                className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-gray-900" />
+            </div>
+            <div>
+              <label className="text-gray-500 block mb-1">Partita IVA</label>
+              <input type="text" value={companyForm.vatNumber}
+                onChange={(e) => setCompanyForm({ ...companyForm, vatNumber: e.target.value })}
+                className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-gray-900 font-mono" />
+            </div>
+            <div>
+              <label className="text-gray-500 block mb-1">Codice Fiscale (se diverso dalla P.IVA)</label>
+              <input type="text" value={companyForm.taxCode}
+                onChange={(e) => setCompanyForm({ ...companyForm, taxCode: e.target.value })}
+                className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-gray-900 font-mono" />
+            </div>
+            <div>
+              <label className="text-gray-500 block mb-1">Indirizzo Sede</label>
+              <input type="text" value={companyForm.address}
+                onChange={(e) => setCompanyForm({ ...companyForm, address: e.target.value })}
+                className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-gray-900" />
+            </div>
+            <div>
+              <label className="text-gray-500 block mb-1">Telefono</label>
+              <input type="text" value={companyForm.phone}
+                onChange={(e) => setCompanyForm({ ...companyForm, phone: e.target.value })}
+                className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-gray-900 font-mono" />
+            </div>
+            <div>
+              <label className="text-gray-500 block mb-1">Email</label>
+              <input type="email" value={companyForm.email}
+                onChange={(e) => setCompanyForm({ ...companyForm, email: e.target.value })}
+                className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-gray-900" />
+            </div>
+            <div>
+              <label className="text-gray-500 block mb-1">Sito Web</label>
+              <input type="text" value={companyForm.website}
+                onChange={(e) => setCompanyForm({ ...companyForm, website: e.target.value })}
+                className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-gray-900" />
+            </div>
+            <div>
+              <label className="text-gray-500 block mb-1">IBAN</label>
+              <input type="text" value={companyForm.iban}
+                onChange={(e) => setCompanyForm({ ...companyForm, iban: e.target.value })}
+                className="w-full bg-white border border-gray-300 rounded-lg p-2.5 text-gray-900 font-mono" />
+            </div>
+          </div>
+
+          <button onClick={handleSaveCompany} disabled={savingCompany}
+            className="px-3 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm font-semibold rounded-xl cursor-pointer disabled:opacity-50">
+            {savingCompany ? 'Salvataggio...' : 'Salva Dati Azienda'}
+          </button>
+        </div>
+
         {/* --- SMTP / email --- */}
         <div className="glass-panel p-6 rounded-2xl border border-gray-200 space-y-4 lg:col-span-2">
           <div className="flex items-center gap-3">
@@ -920,7 +1051,7 @@ export const SettingsView: React.FC = () => {
                     <span className="font-semibold text-sm text-gray-900">{t.display_name}</span>
                     {whatsappStatusBadge(t.meta_status)}
                   </div>
-                  <p className="text-xs text-gray-500 font-mono">{t.body_text}</p>
+                  <p className="text-xs text-gray-500 font-mono">{humanizeWhatsappBody(t.body_text)}</p>
                   {t.meta_rejection_reason && (
                     <p className="text-xs text-rose-600 mt-1">Motivo: {t.meta_rejection_reason}</p>
                   )}

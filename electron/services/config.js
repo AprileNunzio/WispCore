@@ -12,6 +12,19 @@ const DEFAULT_CONFIG = {
   lastBackupAt: null,
   emailTemplatesSeeded: false,
   whatsappTemplatesSeeded: false,
+  // Anagrafica della società: oggi usata solo per firmare email/WhatsApp con
+  // il nome reale invece del generico "Team Tecnico WISP", ma pensata per
+  // essere riusata in futuro nella generazione di fatture/documenti.
+  company: {
+    name: '',
+    vatNumber: '', // P.IVA
+    taxCode: '', // Codice Fiscale, se diverso dalla P.IVA
+    address: '',
+    phone: '',
+    email: '',
+    website: '',
+    iban: '',
+  },
   sync: {
     enabled: false,
     host: '',
@@ -73,6 +86,7 @@ export function readConfig() {
       sync: { ...DEFAULT_CONFIG.sync, ...(parsed.sync || {}) },
       smtp: { ...DEFAULT_CONFIG.smtp, ...(parsed.smtp || {}) },
       whatsapp: { ...DEFAULT_CONFIG.whatsapp, ...(parsed.whatsapp || {}) },
+      company: { ...DEFAULT_CONFIG.company, ...(parsed.company || {}) },
       updater: { ...DEFAULT_CONFIG.updater, ...(parsed.updater || {}) },
       secondaryBackup: { ...DEFAULT_CONFIG.secondaryBackup, ...(parsed.secondaryBackup || {}) },
     };

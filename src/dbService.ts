@@ -14,6 +14,7 @@ import type {
   SmtpSettings,
   WhatsappSettings,
   WhatsappTemplate,
+  CompanySettings,
   UpdateEvent,
   AdminRole,
   NetworkNode,
@@ -157,6 +158,10 @@ export const dbService = {
   setSmtpSettings: (settings: Partial<SmtpSettings> & { password?: string }) => bridge().smtp.setSettings(settings),
   testSmtpConnection: (settings?: Partial<SmtpSettings> & { password?: string }) => bridge().smtp.test(settings),
   sendPaymentReminder: (paymentId: number, templateId: number) => bridge().email.sendPaymentReminder(paymentId, templateId),
+
+  // Anagrafica società (firma email/WhatsApp, base per future fatture)
+  getCompanySettings: (): Promise<CompanySettings> => bridge().company.getSettings(),
+  setCompanySettings: (data: Partial<CompanySettings>) => bridge().company.setSettings(data),
 
   // WhatsApp Business (Meta Cloud API)
   getWhatsappSettings: (): Promise<WhatsappSettings> => bridge().whatsapp.getSettings(),

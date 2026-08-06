@@ -29,6 +29,7 @@ import type {
   SmtpSettings,
   WhatsappSettings,
   WhatsappTemplate,
+  CompanySettings,
   NetworkNode,
   BiMetrics,
   CsvImportResult,
@@ -107,6 +108,10 @@ export interface WispCoreBridge {
   };
   email: {
     sendPaymentReminder: (paymentId: number, templateId: number) => Promise<{ messageId: string }>;
+  };
+  company: {
+    getSettings: () => Promise<CompanySettings>;
+    setSettings: (data: Partial<CompanySettings>) => Promise<CompanySettings>;
   };
   whatsapp: {
     getSettings: () => Promise<WhatsappSettings>;

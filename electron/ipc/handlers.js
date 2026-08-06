@@ -7,6 +7,7 @@ import * as mariadbSync from '../services/sync/mariadb.js';
 import * as syncScheduler from '../services/sync/scheduler.js';
 import * as email from '../services/email.js';
 import * as whatsapp from '../services/whatsapp.js';
+import * as company from '../services/company.js';
 import * as updater from '../services/updater.js';
 import * as csv from '../services/csv.js';
 import * as report from '../services/report.js';
@@ -165,11 +166,20 @@ export function registerIpcHandlers(getWindow) {
     const template = templates.find((t) => t.id === templateId) || templates[0];
     if (!template) throw new Error('Nessun template email disponibile. Creane uno nelle Impostazioni.');
 
+    const azienda = company.getCompanySettings();
     const variables = {
       nome_cliente: `${client.first_name} ${client.last_name}`,
       importo: payment.amount.toFixed(2),
       scadenza: payment.due_date,
       tipo_pagamento: payment.payment_type,
+      // Dati società: usabili nei template come {{azienda_nome}}, {{azienda_piva}},
+      // {{azienda_indirizzo}}, {{azienda_telefono}}, {{azienda_email}}, {{azienda_iban}}.
+      azienda_nome: azienda.name || 'WispCore',
+      azienda_piva: azienda.vatNumber || '',
+      azienda_indirizzo: azienda.address || '',
+      azienda_telefono: azienda.phone || '',
+      azienda_email: azienda.email || '',
+      azienda_iban: azienda.iban || '',
     };
     const subject = email.renderTemplate(template.subject, variables);
     const html = email.renderTemplate(template.body, variables).replace(/\n/g, '<br/>');
@@ -224,16 +234,23 @@ export function registerIpcHandlers(getWindow) {
       EXTRA: 'Intervento Tecnico Extra',
     }[payment.payment_type] || payment.payment_type;
 
+    // 5° parametro posizionale del template: firma con il nome della società
+    // configurato in Impostazioni (fallback "Team Tecnico WISP" se non compilato).
+    const azienda = company.getCompanySettings();
     const result = await whatsapp.sendTemplateMessage({
       to: client.phone,
       templateName: template.template_key,
       languageCode: template.language,
-      params: [`${client.first_name} ${client.last_name}`, paymentTypeLabel, payment.amount.toFixed(2), payment.due_date],
+      params: [`${client.first_name} ${client.last_name}`, paymentTypeLabel, payment.amount.toFixed(2), payment.due_date, azienda.name || 'Team Tecnico WISP'],
     });
     database.recordAudit(CURRENT_ACTOR(), 'WHATSAPP_SENT', 'payment', paymentId, { to: client.phone, template: template.template_key });
     database.persist();
     return result;
   });
+
+  // ---- Anagrafica società (firma email/WhatsApp, base per future fatture) ----
+  handle('company:getSettings', () => company.getCompanySettings());
+  handle('company:setSettings', (data) => company.setCompanySettings(data));
 
   // ---- Backup / restore ----
   handle('backup:list', () => backup.listBackups());
