@@ -2,10 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { dbService } from '../dbService';
 import { useToast } from './Toast';
 import type { Client, Collaborator, Commission, CommissionByCollaborator } from '../types';
-import { Users, UserPlus, Award, Phone, Mail, CheckCircle2, Clock, Edit3, TrendingUp, Wallet, UserRound, ArrowRight } from 'lucide-react';
+import { Users, UserPlus, Award, Phone, Mail, CheckCircle2, Clock, Edit3, Wallet, UserRound, ArrowRight } from 'lucide-react';
 import { CollaboratorDetailModal } from './CollaboratorDetailModal';
 
-const emptyForm = { first_name: '', last_name: '', phone: '', email: '', default_commission_fee: 0 };
+const emptyForm = { first_name: '', last_name: '', phone: '', email: '' };
 
 export const CollaboratorsView: React.FC = () => {
   const { notify } = useToast();
@@ -124,12 +124,6 @@ export const CollaboratorsView: React.FC = () => {
                   <Mail size={13} className="text-gray-400" /> {col.email || 'Email non fornita'}
                 </div>
               </div>
-
-              {!!col.default_commission_fee && (
-                <div className="text-xs text-cyan-700 bg-cyan-50 border border-cyan-200 rounded-lg px-2.5 py-1.5 inline-flex items-center gap-1.5">
-                  <TrendingUp size={12} /> Proposta di default: € {col.default_commission_fee.toFixed(2)}/mese (modificabile per ogni cliente)
-                </div>
-              )}
 
               <div>
                 <span className="text-[11px] text-gray-400 uppercase font-semibold flex items-center gap-1.5 mb-1.5">
@@ -269,18 +263,6 @@ export const CollaboratorsView: React.FC = () => {
                   className="w-full bg-white border border-gray-300 rounded-xl p-2.5 text-gray-900"
                 />
               </div>
-              <div>
-                <label className="text-gray-500 block mb-1">Guadagno di Default (€/mese per cliente)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={form.default_commission_fee ?? 0}
-                  onChange={(e) => setForm({ ...form, default_commission_fee: parseFloat(e.target.value) || 0 })}
-                  className="w-full bg-white border border-gray-300 rounded-xl p-2.5 text-cyan-700 font-mono font-bold"
-                />
-                <p className="text-[11px] text-gray-400 mt-1">Usato come proposta automatica quando assegni questo collaboratore a un nuovo cliente (es. cliente paga 20€/mese, 5€/mese al collaboratore).</p>
-              </div>
-
               <div className="flex justify-end gap-2 pt-3">
                 <button
                   type="button"

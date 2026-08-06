@@ -54,6 +54,13 @@ function phoneDigitsForWhatsApp(phone: string): string {
   return phone.replace(/[^\d]/g, '');
 }
 
+/** Somma un numero di mesi a una data "YYYY-MM-DD", usata per proporre la prossima scadenza in base al ciclo di fatturazione. */
+function addMonthsToDateStr(dateStr: string, months: number): string {
+  const d = new Date(`${dateStr}T00:00:00`);
+  d.setMonth(d.getMonth() + months);
+  return d.toISOString().split('T')[0];
+}
+
 export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' }) => {
   const { notify } = useToast();
   const confirmDialog = useConfirm();
@@ -225,12 +232,13 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
 
   const handleSelectCollaborator = (collabId: number | null) => {
     if (!editingClient) return;
-    const collab = collaborators.find((c) => c.id === collabId);
+    // Nessuna proposta automatica: il guadagno va sempre concordato ed
+    // inserito esplicitamente per il singolo cliente, non c'è più un
+    // "default" del collaboratore da precompilare.
     setEditingClient({
       ...editingClient,
       collaborator_id: collabId,
-      // Propone il guadagno di default del collaboratore solo se non è già stato personalizzato dall'utente
-      collaborator_commission_fee: editingClient.collaborator_commission_fee || collab?.default_commission_fee || 0,
+      collaborator_commission_fee: editingClient.collaborator_commission_fee || 0,
     });
   };
 
@@ -490,7 +498,7 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
 
       {showModal && editingClient && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-3xl glass-panel-glow bg-white rounded-3xl p-6 border border-gray-200 max-h-[90vh] overflow-y-auto">
+          <div className="w-full max-w-6xl glass-panel-glow bg-white rounded-3xl p-6 border border-gray-200 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-6 pb-3 border-b border-gray-200">
               <h2 className="text-lg font-bold text-gray-900">
                 {editingClient.id ? 'Modifica Scheda Cliente WISP' : 'Nuova Attivazione Cliente WISP'}
@@ -501,6 +509,7 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
             </div>
 
             <form onSubmit={handleSave} className="space-y-4 text-sm">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <div className="bg-gray-50 p-4 rounded-2xl border border-gray-200 space-y-3">
                 <h4 className="text-xs font-semibold text-blue-700 uppercase tracking-wider">Dati Anagrafici & Contatto</h4>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -626,7 +635,9 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
                   </div>
                 </div>
               </div>
+              </div>
 
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <div className="bg-gray-50 p-4 rounded-2xl border border-gray-200 space-y-3">
                 <h4 className="text-xs font-semibold text-emerald-700 uppercase tracking-wider flex items-center gap-1">
                   <DollarSign size={14} /> Piano, Fatturazione & Collaboratore
@@ -685,7 +696,16 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
                     <input
                       type="date"
                       value={editingClient.last_payment_date || ''}
-                      onChange={(e) => setEditingClient({ ...editingClient, last_payment_date: e.target.value })}
+                      onChange={(e) => {
+                        const lastPaymentDate = e.target.value;
+                        const cycleMonths = BILLING_CYCLE_INFO[editingClient.billing_cycle || 'MONTHLY'].months;
+                        setEditingClient({
+                          ...editingClient,
+                          last_payment_date: lastPaymentDate,
+                          // Propone da sola la prossima scadenza in base al ciclo di fatturazione: resta comunque modificabile a mano subito dopo.
+                          next_due_date: lastPaymentDate ? addMonthsToDateStr(lastPaymentDate, cycleMonths) : editingClient.next_due_date,
+                        });
+                      }}
                       className="w-full bg-white border border-gray-300 rounded-lg p-3 text-gray-900 font-mono"
                     />
                   </div>
@@ -697,6 +717,7 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
                       onChange={(e) => setEditingClient({ ...editingClient, next_due_date: e.target.value })}
                       className="w-full bg-white border border-gray-300 rounded-lg p-3 text-amber-700 font-mono"
                     />
+                    <p className="text-[11px] text-gray-400 mt-1">Proposta automaticamente dalla Data Ultimo Pagamento in base al ciclo scelto sopra; modificabile a mano.</p>
                   </div>
                   <div className="sm:col-span-2">
                     <label className="text-gray-500 mb-1 block">Collaboratore di Riferimento</label>
@@ -816,6 +837,7 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
                     )}
                   </div>
                 </div>
+              </div>
               </div>
 
               <div className="flex justify-end gap-3 pt-3">
