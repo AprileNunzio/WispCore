@@ -205,6 +205,35 @@ CREATE TABLE IF NOT EXISTS email_templates (
   updated_at TEXT NOT NULL,
   deleted INTEGER NOT NULL DEFAULT 0
 );
+
+-- BETA ENTERPRISE TABLES --
+CREATE TABLE IF NOT EXISTS beta_nas_routers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  uuid TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  ip_address TEXT NOT NULL,
+  api_port INTEGER NOT NULL,
+  username TEXT NOT NULL,
+  password TEXT,
+  radius_secret TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS beta_ipam_subnets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  uuid TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  cidr TEXT NOT NULL,
+  gateway TEXT,
+  vlan_id INTEGER,
+  notes TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted INTEGER NOT NULL DEFAULT 0
+);
 `;
 
 /** Adds columns that may be missing on a database created by an older version of the app. */
@@ -1711,3 +1740,105 @@ export function upsertCommissionFromRemote(row) {
   }
   return true;
 }
+
+// --- BETA ENTERPRISE METHODS ---
+
+export function listBetaNasRouters() {
+  const rows = all('SELECT * FROM beta_nas_routers WHERE deleted = 0 ORDER BY name ASC');
+  return rows.map(r => ({
+    ...r,
+    hasPassword: !!r.password,
+    password: undefined, // never send raw password to renderer unless decrypted
+    active: r.active === 1
+  }));
+}
+
+export function saveBetaNasRouter(data, actor) {
+  const now = new Date().toISOString();
+  if (data.id) {
+    let updateFields = [
+      'name = ?', 'ip_address = ?', 'api_port = ?', 'username = ?', 
+      'radius_secret = ?', 'active = ?', 'updated_at = ?'
+    ];
+    let params = [
+      data.name, data.ip_address, data.api_port, data.username,
+      data.radius_secret || null, data.active ? 1 : 0, now
+    ];
+
+    if (data.password !== undefined && data.password !== null) {
+      updateFields.push('password = ?');
+      params.push(data.password ? encryptField('nas', 'password', data.password) : null);
+    }
+    
+    params.push(data.id);
+    run(\UPDATE beta_nas_routers SET \ WHERE id = ?\, ...params);
+    recordAudit(actor, 'UPDATE', 'beta_nas_router', data.id, null);
+    persist();
+    return data.id;
+  } else {
+    const uuidStr = crypto.randomUUID();
+    const encPass = data.password ? encryptField('nas', 'password', data.password) : null;
+    const stmt = db.prepare(\
+      INSERT INTO beta_nas_routers (uuid, name, ip_address, api_port, username, password, radius_secret, active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    \);
+    stmt.run([uuidStr, data.name, data.ip_address, data.api_port, data.username, encPass, data.radius_secret || null, data.active ? 1 : 0, now, now]);
+    const id = getInsertId();
+    stmt.free();
+    recordAudit(actor, 'CREATE', 'beta_nas_router', id, null);
+    persist();
+    return id;
+  }
+}
+
+export function deleteBetaNasRouter(id, actor) {
+  run('UPDATE beta_nas_routers SET deleted = 1, updated_at = ? WHERE id = ?', new Date().toISOString(), id);
+  recordAudit(actor, 'DELETE', 'beta_nas_router', id, null);
+  persist();
+}
+
+export function listBetaIpamSubnets() {
+  return all('SELECT * FROM beta_ipam_subnets WHERE deleted = 0 ORDER BY cidr ASC');
+}
+
+export function saveBetaIpamSubnet(data, actor) {
+  const now = new Date().toISOString();
+  if (data.id) {
+    run(\
+      UPDATE beta_ipam_subnets SET name = ?, cidr = ?, gateway = ?, vlan_id = ?, notes = ?, updated_at = ?
+      WHERE id = ?
+    \, [data.name, data.cidr, data.gateway || null, data.vlan_id || null, data.notes || null, now, data.id]);
+    recordAudit(actor, 'UPDATE', 'beta_ipam_subnet', data.id, null);
+    persist();
+    return data.id;
+  } else {
+    const uuidStr = crypto.randomUUID();
+    const stmt = db.prepare(\
+      INSERT INTO beta_ipam_subnets (uuid, name, cidr, gateway, vlan_id, notes, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    \);
+    stmt.run([uuidStr, data.name, data.cidr, data.gateway || null, data.vlan_id || null, data.notes || null, now, now]);
+    const id = getInsertId();
+    stmt.free();
+    recordAudit(actor, 'CREATE', 'beta_ipam_subnet', id, null);
+    persist();
+    return id;
+  }
+}
+
+export function getBetaRadiusSettings() {
+  const row = get('SELECT value FROM schema_meta WHERE key = ?', ['beta_radius_settings']);
+  if (!row) return { enabled: false, secret: '', coa_port: 3799, disconnect_on_overdue: false };
+  return JSON.parse(row.value);
+}
+
+export function saveBetaRadiusSettings(settings, actor) {
+  run(
+    'INSERT INTO schema_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+    ['beta_radius_settings', JSON.stringify(settings)]
+  );
+  recordAudit(actor, 'UPDATE', 'beta_radius_settings', null, null);
+  persist();
+  return settings;
+}
+

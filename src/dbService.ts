@@ -182,4 +182,15 @@ export const dbService = {
   downloadUpdateNow: () => bridge().update.downloadNow(),
   installUpdate: () => bridge().update.install(),
   onUpdateEvent: (callback: (event: UpdateEvent) => void) => bridge().update.onEvent(callback),
+
+  // ---- Beta Enterprise Modules ----
+  getBetaNasRouters: () => invoke('beta:nasRouters:list'),
+  saveBetaNasRouter: (data: Partial<BetaNasRouter>) => invoke('beta:nasRouters:save', data),
+  deleteBetaNasRouter: (id: number) => invoke('beta:nasRouters:delete', id),
+  
+  getBetaIpamSubnets: () => invoke('beta:ipamSubnets:list'),
+  saveBetaIpamSubnet: (data: Partial<BetaIpamSubnet>) => invoke('beta:ipamSubnets:save', data),
+  
+  getBetaRadiusSettings: () => invoke('beta:radiusSettings:get'),
+  saveBetaRadiusSettings: (settings: BetaRadiusSettings) => invoke('beta:radiusSettings:save', settings),
 };

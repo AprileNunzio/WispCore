@@ -363,3 +363,40 @@ export interface SmtpSettings {
   fromName: string;
   fromEmail: string;
 }
+
+// --- BETA ENTERPRISE TYPES ---
+
+export interface BetaNasRouter {
+  id: number;
+  uuid?: string;
+  name: string;
+  ip_address: string;
+  api_port: number;
+  username: string;
+  hasPassword?: boolean;
+  password?: string; // Solo per payload, in DB cifrata
+  radius_secret?: string;
+  active: boolean;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface BetaIpamSubnet {
+  id: number;
+  uuid?: string;
+  name: string;
+  cidr: string; // es. 10.10.10.0/24
+  gateway?: string | null;
+  vlan_id?: number | null;
+  notes?: string;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface BetaRadiusSettings {
+  enabled: boolean;
+  secret: string;
+  coa_port: number;
+  disconnect_on_overdue: boolean;
+}
+

@@ -212,6 +212,18 @@ export function registerIpcHandlers(getWindow) {
   // ---- Audit log ----
   handle('audit:list', (limit) => database.listAuditLog(limit));
 
+  // ---- Beta Enterprise Modules ----
+  handle('beta:nasRouters:list', () => database.listBetaNasRouters());
+  handle('beta:nasRouters:save', (data) => database.saveBetaNasRouter(data, CURRENT_ACTOR()));
+  handle('beta:nasRouters:delete', (id) => database.deleteBetaNasRouter(id, CURRENT_ACTOR()));
+  
+  handle('beta:ipamSubnets:list', () => database.listBetaIpamSubnets());
+  handle('beta:ipamSubnets:save', (data) => database.saveBetaIpamSubnet(data, CURRENT_ACTOR()));
+  
+  handle('beta:radiusSettings:get', () => database.getBetaRadiusSettings());
+  handle('beta:radiusSettings:save', (settings) => database.saveBetaRadiusSettings(settings, CURRENT_ACTOR()));
+
+
   // ---- Auto-update (real GitHub Releases check, honestly reported) ----
   const sendUpdateEvent = (payload) => {
     const win = getWindow();

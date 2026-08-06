@@ -133,8 +133,10 @@ function buildConnectionConfig() {
     database: sync.database,
     user: sync.user,
     password: decryptSecret({ protection: sync.passwordProtection, value: sync.passwordEncrypted }),
-    ssl: sync.ssl ? {} : undefined,
-    connectTimeout: 8000,
+    // Database online condivisi spesso usano certificati self-signed o chain non perfette.
+    // Impostiamo rejectUnauthorized: false per permettere la connessione cifrata senza blocchi.
+    ssl: sync.ssl ? { rejectUnauthorized: false } : undefined,
+    connectTimeout: 15000,
   };
 }
 
@@ -146,8 +148,8 @@ export async function testConnection(overrideSettings) {
         database: overrideSettings.database,
         user: overrideSettings.user,
         password: overrideSettings.password,
-        ssl: overrideSettings.ssl ? {} : undefined,
-        connectTimeout: 8000,
+        ssl: overrideSettings.ssl ? { rejectUnauthorized: false } : undefined,
+        connectTimeout: 15000,
       }
     : buildConnectionConfig();
 

@@ -14,6 +14,7 @@ import { CoverageView } from './components/CoverageView';
 import { ReportBiView } from './components/ReportBiView';
 import { EmailTemplatesView } from './components/EmailTemplatesView';
 import { SettingsView } from './components/SettingsView';
+import { EnterpriseBetaView } from './components/beta/EnterpriseBetaView';
 import { GlobalSearch, type SearchNavItem } from './components/GlobalSearch';
 import { NotificationCenter } from './components/NotificationCenter';
 import type { UpdateEvent, Session, AdminRole } from './types';
@@ -33,10 +34,11 @@ import {
   MapPin,
   BarChart3,
   Search,
+  Server,
   type LucideIcon,
 } from 'lucide-react';
 
-type Tab = 'dashboard' | 'clients' | 'collaborators' | 'financial' | 'plans' | 'scadenze' | 'coverage' | 'report' | 'templates' | 'settings';
+type Tab = 'dashboard' | 'clients' | 'collaborators' | 'financial' | 'plans' | 'scadenze' | 'coverage' | 'report' | 'templates' | 'settings' | 'enterprise';
 
 interface NavItem {
   id: Tab;
@@ -75,6 +77,12 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { id: 'templates', label: 'Template Email', icon: MailPlus, roles: ['SUPER_ADMIN', 'COMMERCIALE'] },
       { id: 'settings', label: 'Impostazioni & Sync', icon: Settings, roles: ['SUPER_ADMIN'] },
+    ],
+  },
+  {
+    heading: 'Laboratorio WISP',
+    items: [
+      { id: 'enterprise', label: 'Enterprise (BETA)', icon: Server, roles: ['SUPER_ADMIN'] },
     ],
   },
 ];
@@ -346,6 +354,7 @@ const AppShell: React.FC = () => {
         {effectiveTab === 'report' && <ReportBiView />}
         {effectiveTab === 'templates' && <EmailTemplatesView />}
         {effectiveTab === 'settings' && <SettingsView />}
+        {effectiveTab === 'enterprise' && <EnterpriseBetaView />}
       </main>
 
       <GlobalSearch
