@@ -131,4 +131,20 @@ contextBridge.exposeInMainWorld('wispcore', {
   migrate: {
     legacyLocalStorage: (payload) => invoke('migrate:legacyLocalStorage', payload),
   },
+  beta: {
+    nasRouters: {
+      list: () => invoke('beta:nasRouters:list'),
+      save: (data) => invoke('beta:nasRouters:save', data),
+      delete: (id) => invoke('beta:nasRouters:delete', id),
+    },
+    ipamSubnets: {
+      list: () => invoke('beta:ipamSubnets:list'),
+      save: (data) => invoke('beta:ipamSubnets:save', data),
+    },
+    radiusSettings: {
+      get: () => invoke('beta:radiusSettings:get'),
+      save: (settings) => invoke('beta:radiusSettings:save', settings),
+    },
+  },
+  invoke: (channel, ...args) => invoke(channel, ...args)
 });

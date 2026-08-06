@@ -15,6 +15,9 @@ import type {
   UpdateEvent,
   AdminRole,
   NetworkNode,
+  BetaNasRouter,
+  BetaIpamSubnet,
+  BetaRadiusSettings,
 } from './types';
 
 /**
@@ -184,13 +187,13 @@ export const dbService = {
   onUpdateEvent: (callback: (event: UpdateEvent) => void) => bridge().update.onEvent(callback),
 
   // ---- Beta Enterprise Modules ----
-  getBetaNasRouters: () => invoke('beta:nasRouters:list'),
-  saveBetaNasRouter: (data: Partial<BetaNasRouter>) => invoke('beta:nasRouters:save', data),
-  deleteBetaNasRouter: (id: number) => invoke('beta:nasRouters:delete', id),
+  getBetaNasRouters: (): Promise<BetaNasRouter[]> => bridge().beta.nasRouters.list(),
+  saveBetaNasRouter: (data: Partial<BetaNasRouter>): Promise<BetaNasRouter> => bridge().beta.nasRouters.save(data),
+  deleteBetaNasRouter: (id: number): Promise<void> => bridge().beta.nasRouters.delete(id),
   
-  getBetaIpamSubnets: () => invoke('beta:ipamSubnets:list'),
-  saveBetaIpamSubnet: (data: Partial<BetaIpamSubnet>) => invoke('beta:ipamSubnets:save', data),
+  getBetaIpamSubnets: (): Promise<BetaIpamSubnet[]> => bridge().beta.ipamSubnets.list(),
+  saveBetaIpamSubnet: (data: Partial<BetaIpamSubnet>): Promise<BetaIpamSubnet> => bridge().beta.ipamSubnets.save(data),
   
-  getBetaRadiusSettings: () => invoke('beta:radiusSettings:get'),
-  saveBetaRadiusSettings: (settings: BetaRadiusSettings) => invoke('beta:radiusSettings:save', settings),
+  getBetaRadiusSettings: (): Promise<BetaRadiusSettings> => bridge().beta.radiusSettings.get(),
+  saveBetaRadiusSettings: (settings: BetaRadiusSettings): Promise<void> => bridge().beta.radiusSettings.save(settings),
 };

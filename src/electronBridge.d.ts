@@ -145,6 +145,22 @@ export interface WispCoreBridge {
   migrate: {
     legacyLocalStorage: (payload: unknown) => Promise<{ migrated: boolean; clients?: number; collaborators?: number; reason?: string }>;
   };
+  beta: {
+    nasRouters: {
+      list: () => Promise<import('./types').BetaNasRouter[]>;
+      save: (data: Partial<import('./types').BetaNasRouter>) => Promise<import('./types').BetaNasRouter>;
+      delete: (id: number) => Promise<void>;
+    };
+    ipamSubnets: {
+      list: () => Promise<import('./types').BetaIpamSubnet[]>;
+      save: (data: Partial<import('./types').BetaIpamSubnet>) => Promise<import('./types').BetaIpamSubnet>;
+    };
+    radiusSettings: {
+      get: () => Promise<import('./types').BetaRadiusSettings>;
+      save: (settings: import('./types').BetaRadiusSettings) => Promise<void>;
+    };
+  };
+  invoke: (channel: string, ...args: any[]) => Promise<any>;
 }
 
 declare global {
