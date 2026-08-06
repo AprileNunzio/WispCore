@@ -151,6 +151,9 @@ export interface WispCoreBridge {
       save: (data: Partial<import('./types').BetaNasRouter>) => Promise<import('./types').BetaNasRouter>;
       delete: (id: number) => Promise<void>;
     };
+    nms: {
+      fetchAccounts: (nasId: number) => Promise<any[]>;
+    };
     ipamSubnets: {
       list: () => Promise<import('./types').BetaIpamSubnet[]>;
       save: (data: Partial<import('./types').BetaIpamSubnet>) => Promise<import('./types').BetaIpamSubnet>;

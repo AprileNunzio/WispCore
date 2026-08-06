@@ -137,6 +137,9 @@ contextBridge.exposeInMainWorld('wispcore', {
       save: (data) => invoke('beta:nasRouters:save', data),
       delete: (id) => invoke('beta:nasRouters:delete', id),
     },
+    nms: {
+      fetchAccounts: (nasId) => invoke('beta:nms:fetchAccounts', nasId),
+    },
     ipamSubnets: {
       list: () => invoke('beta:ipamSubnets:list'),
       save: (data) => invoke('beta:ipamSubnets:save', data),

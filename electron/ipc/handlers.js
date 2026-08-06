@@ -9,6 +9,7 @@ import * as email from '../services/email.js';
 import * as updater from '../services/updater.js';
 import * as csv from '../services/csv.js';
 import * as report from '../services/report.js';
+import * as mikrotikSync from '../services/mikrotikSync.js';
 
 // Con più utenti, l'attore da registrare in audit/outbox è chi ha
 // effettivamente sbloccato la sessione corrente (auth.getCurrentSession),
@@ -225,6 +226,8 @@ export function registerIpcHandlers(getWindow) {
   
   handle('beta:cpeCredentials:get', () => database.getBetaCpeCredentials());
   handle('beta:cpeCredentials:save', (settings) => database.saveBetaCpeCredentials(settings, CURRENT_ACTOR()));
+
+  handle('beta:nms:fetchAccounts', (nasId) => mikrotikSync.fetchMikrotikAccounts(nasId));
 
   // ---- Auto-update (real GitHub Releases check, honestly reported) ----
   const sendUpdateEvent = (payload) => {

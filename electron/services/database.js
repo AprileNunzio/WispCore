@@ -1863,16 +1863,17 @@ export function saveBetaRadiusSettings(settings, actor) {
 
 export function getBetaCpeCredentials() {
   const row = get('SELECT value FROM schema_meta WHERE key = ?', ['beta_cpe_credentials']);
-  if (!row) return { username: 'admin', password: '', hasPassword: false };
+  if (!row) return { username: 'admin', password: '', hasPassword: false, uisp_key: '' };
   const data = JSON.parse(row.value);
   const pw = data.password ? decryptField(data.password) : null;
-  return { username: data.username || 'admin', password: pw, hasPassword: !!pw };
+  return { username: data.username || 'admin', password: pw, hasPassword: !!pw, uisp_key: data.uisp_key || '' };
 }
 
 export function saveBetaCpeCredentials(settings, actor) {
   const toSave = {
     username: settings.username || 'admin',
     password: settings.password ? encryptField(settings.password) : null,
+    uisp_key: settings.uisp_key || '',
   };
   run(
     'INSERT INTO schema_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',

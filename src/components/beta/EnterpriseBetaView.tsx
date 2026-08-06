@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { dbService } from '../../dbService';
 import { useToast, useConfirm } from '../Toast';
 import { Network, Server, KeyRound, Wifi, Activity, ShieldCheck, Database, Save, Plus, Trash2 } from 'lucide-react';
-import type { BetaNasRouter, BetaIpamSubnet, BetaRadiusSettings } from '../../types';
+import type { BetaNasRouter, BetaIpamSubnet, BetaRadiusSettings, BetaCpeCredentials } from '../../types';
 
 export const EnterpriseBetaView: React.FC = () => {
   const { notify } = useToast();
@@ -25,7 +25,7 @@ export const EnterpriseBetaView: React.FC = () => {
   const [selectedSubnet, setSelectedSubnet] = useState<BetaIpamSubnet | null>(null);
 
   // --- CPE Credentials State ---
-  const [cpeCredentials, setCpeCredentials] = useState<{username: string, password?: string}>({ username: 'admin', password: '' });
+  const [cpeCredentials, setCpeCredentials] = useState<BetaCpeCredentials>({ username: 'admin', password: '', uisp_key: '' });
 
   useEffect(() => {
     loadData();
@@ -295,6 +295,12 @@ export const EnterpriseBetaView: React.FC = () => {
               <label className="block text-gray-700 font-bold mb-1">Password Default</label>
               <input type="password" value={cpeCredentials.password} onChange={e => setCpeCredentials({...cpeCredentials, password: e.target.value})} className="w-full p-3 bg-white border border-gray-300 rounded-xl font-mono" placeholder="Password di sistema..." />
               <p className="text-xs text-gray-500 mt-1">Questa password verrà copiata in automatico negli appunti quando clicchi sull'indirizzo IP di un cliente.</p>
+            </div>
+
+            <div className="pt-4 border-t border-gray-100">
+              <label className="block text-gray-700 font-bold mb-1">Codice UISP (Opzionale)</label>
+              <input type="text" value={cpeCredentials.uisp_key || ''} onChange={e => setCpeCredentials({...cpeCredentials, uisp_key: e.target.value})} className="w-full p-3 bg-white border border-gray-300 rounded-xl font-mono text-sm" placeholder="wss://[tuo-uisp]:443+key+..." />
+              <p className="text-xs text-gray-500 mt-1">La UISP Key globale (URL wss) da incollare nelle nuove antenne per agganciarle al controller.</p>
             </div>
 
             <button onClick={handleSaveCpeCredentials} className="mt-4 bg-blue-600 hover:bg-blue-700 text-white px-5 py-3 rounded-xl font-bold flex items-center gap-2 shadow-lg">

@@ -408,5 +408,6 @@ export interface BetaCpeCredentials {
   username: string;
   password?: string;
   hasPassword?: boolean;
+  uisp_key?: string;
 }
 

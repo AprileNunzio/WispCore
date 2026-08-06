@@ -200,4 +200,6 @@ export const dbService = {
 
   getBetaCpeCredentials: (): Promise<BetaCpeCredentials> => bridge().beta.cpeCredentials.get(),
   saveBetaCpeCredentials: (settings: BetaCpeCredentials): Promise<void> => bridge().beta.cpeCredentials.save(settings),
+
+  fetchMikrotikAccounts: (nasId: number): Promise<any[]> => bridge().beta.nms.fetchAccounts(nasId),
 };

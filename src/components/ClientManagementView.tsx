@@ -3,6 +3,7 @@ import { dbService } from '../dbService';
 import { useToast, useConfirm } from './Toast';
 import { ClientDetailModal } from './ClientDetailModal';
 import { ClientFormModal } from './ClientFormModal';
+import { MikrotikImportModal } from './beta/MikrotikImportModal';
 import type { Client, ClientStatus, Collaborator, NetworkNode, Plan, ClientSavePayload } from '../types';
 import { BILLING_CYCLE_INFO } from '../types';
 import {
@@ -26,7 +27,8 @@ import {
   Paperclip,
   Table2,
   Upload,
-  Filter
+  Filter,
+  HardDrive
 } from 'lucide-react';
 
 interface Props {
@@ -63,6 +65,7 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
   const [planFilter, setPlanFilter] = useState<'ALL' | number>('ALL');
   const [collaboratorFilter, setCollaboratorFilter] = useState<'ALL' | number>('ALL');
   const [showModal, setShowModal] = useState(false);
+  const [showMikrotikModal, setShowMikrotikModal] = useState(false);
   const [editingClient, setEditingClient] = useState<Partial<Client> | null>(null);
   const [visiblePasswordIds, setVisiblePasswordIds] = useState<Set<number>>(new Set());
   const [detailClientId, setDetailClientId] = useState<number | null>(null);
@@ -110,6 +113,43 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
       notify(err instanceof Error ? err.message : "Errore nell'importazione.", 'error');
     } finally {
       setIsImportingCsv(false);
+    }
+  };
+
+  const handleMikrotikImport = async (accounts: any[]) => {
+    if (accounts.length === 0) return;
+    try {
+      const defPlan = plans.length > 0 ? plans[0].id : null;
+      const defCollab = collaborators.length > 0 ? collaborators[0].id : null;
+
+      for (const acc of accounts) {
+        const baseName = acc.comment ? acc.comment.trim() : (acc.name || 'Sconosciuto');
+        const isPppoe = acc.type === 'pppoe';
+        
+        await dbService.saveClient({
+          first_name: baseName,
+          last_name: '[Importato]',
+          status: 'ACTIVE',
+          plan_id: defPlan,
+          collaborator_id: defCollab,
+          address: 'Da Mikrotik',
+          phone: '',
+          tax_code: '',
+          assigned_ip: acc.remote_address || '',
+          mac_address: acc.caller_id || '',
+          device_model: isPppoe ? 'PPPoE Client' : 'DHCP Client',
+          pppoe_username: isPppoe ? acc.name : '',
+          pppoe_password: acc.password || '',
+          billing_cycle: 'MONTHLY',
+          monthly_fee: 0,
+          installation_fee: 0,
+          notes: 'Importato via NMS Mikrotik'
+        } as any);
+      }
+      notify(`${accounts.length} clienti importati da Mikrotik con successo.`, 'success');
+      loadData();
+    } catch (error: any) {
+      notify(`Errore durante il salvataggio dei clienti importati: ${error.message}`, 'error');
     }
   };
 
@@ -182,6 +222,20 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
     return matchesSearch && matchesStatus && matchesPlan && matchesCollab;
   });
 
+  const handleOpenCpe = async (e: React.MouseEvent, ip: string) => {
+    e.stopPropagation();
+    try {
+      const creds = await dbService.getBetaCpeCredentials();
+      if (creds.password) {
+        navigator.clipboard.writeText(creds.password);
+      }
+      window.wispcore.system.openExternal(`https://${ip}`);
+      notify(`Browser aperto per ${ip}. Password '${creds.username}' copiata negli appunti!`, 'success');
+    } catch (err) {
+      notify('Impossibile recuperare credenziali CPE', 'error');
+    }
+  };
+
   return (
     <div className="space-y-6 pb-12">
       {/* Top Bar Widescreen */}
@@ -211,6 +265,13 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
             className="flex items-center gap-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold px-3 py-3 rounded-xl cursor-pointer transition-colors disabled:opacity-50"
           >
             <Upload size={15} /> <span className="hidden lg:inline">Importa CSV</span>
+          </button>
+          <button
+            onClick={() => setShowMikrotikModal(true)}
+            title="Importa da Router Mikrotik (NMS)"
+            className="flex items-center gap-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold px-3 py-3 rounded-xl cursor-pointer transition-colors"
+          >
+            <HardDrive size={15} /> <span className="hidden lg:inline">Importa Mikrotik</span>
           </button>
 
           <button
@@ -391,8 +452,14 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
                   <div className="text-[11px] text-gray-400 uppercase flex items-center gap-1 mb-1">
                     <Network size={12} className="text-blue-600" /> Indirizzo IP Assegnato
                   </div>
-                  <div className="text-blue-700 font-bold text-sm">
-                    {client.assigned_ip || '10.100.X.X'}
+                  <div className="text-sm">
+                    {client.assigned_ip ? (
+                      <button onClick={(e) => handleOpenCpe(e, client.assigned_ip!)} className="text-blue-700 hover:text-blue-900 font-bold font-mono cursor-pointer transition-colors" title="Apri interfaccia web">
+                        {client.assigned_ip}
+                      </button>
+                    ) : (
+                      <span className="text-blue-700 font-bold">10.100.X.X</span>
+                    )}
                   </div>
                   <div className="text-gray-400 text-[11px]">Subnet /32 Static</div>
                 </div>
@@ -432,6 +499,15 @@ export const ClientManagementView: React.FC<Props> = ({ initialSearchQuery = '' 
           networkNodes={networkNodes}
           onSave={handleSavePayload}
           onClose={() => setShowModal(false)}
+        />
+      )}
+
+      {showMikrotikModal && (
+        <MikrotikImportModal 
+          isOpen={showMikrotikModal} 
+          onClose={() => setShowMikrotikModal(false)} 
+          onImportSelected={handleMikrotikImport}
+          existingClients={clients} 
         />
       )}
     </div>
