@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { dbService } from '../dbService';
 import type { Session } from '../types';
-import { Lock, ShieldAlert, ArrowRight, Server, Wifi, Eye, EyeOff, Delete } from 'lucide-react';
+import { Lock, ShieldAlert, ArrowRight, Server, Wifi, Eye, EyeOff, Delete, Shield, Cpu, Code } from 'lucide-react';
+import { APP_VERSION } from '../version';
 
 interface Props {
   onUnlock: (session: Session) => void;
@@ -77,11 +78,22 @@ export const LockScreen: React.FC<Props> = ({ onUnlock }) => {
           <Lock size={11} /> Accesso staff riservato — inserisci il tuo PIN personale
         </p>
 
-        <div className="my-5 p-3 bg-blue-50 border border-blue-200 rounded-xl flex items-center gap-3 text-left">
-          <Server className="text-cyan-700 shrink-0" size={20} />
-          <div className="text-xs text-gray-600">
-            <span className="text-gray-900 font-medium block">Database Cifrato in Locale</span>
-            <span className="break-all">Documenti\NunzioTech\WispCore\database\wisp_data.db</span>
+        <div className="my-5 flex flex-col gap-2">
+          <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl flex items-center gap-3 text-left">
+            <Server className="text-blue-600 shrink-0" size={18} />
+            <div className="text-xs text-gray-600 flex-1">
+              <span className="text-gray-900 font-bold block">Connessione DB Attiva</span>
+              <span className="text-[10px] uppercase tracking-wide">SQLite (Cifrato) AES-256</span>
+            </div>
+            <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)] animate-pulse" />
+          </div>
+
+          <div className="p-3 bg-cyan-50 border border-cyan-200 rounded-xl flex items-center gap-3 text-left">
+            <Shield className="text-cyan-600 shrink-0" size={18} />
+            <div className="text-xs text-cyan-800 flex-1">
+              <span className="font-bold block">Accesso Sicuro</span>
+              <span className="text-[10px] tracking-wide">Modalità WispCore Enterprise</span>
+            </div>
           </div>
         </div>
 
@@ -162,7 +174,16 @@ export const LockScreen: React.FC<Props> = ({ onUnlock }) => {
           </button>
         </form>
 
-        <p className="text-[10px] text-gray-300 mt-6">WispCore Enterprise • NunzioTech</p>
+        <div className="mt-8 flex flex-col items-center gap-2 border-t border-gray-100 pt-5">
+          <div className="flex items-center gap-4 text-[10px] text-gray-400 font-semibold uppercase tracking-wider">
+            <span className="flex items-center gap-1"><Cpu size={12} /> Node.js</span>
+            <span className="flex items-center gap-1"><Code size={12} /> React</span>
+            <span className="flex items-center gap-1"><Server size={12} /> NMS Sync</span>
+          </div>
+          <p className="text-[11px] text-gray-400">
+            WispCore Enterprise v{APP_VERSION} &copy; {new Date().getFullYear()} NunzioTech
+          </p>
+        </div>
       </div>
     </div>
   );

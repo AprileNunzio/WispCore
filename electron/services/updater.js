@@ -149,7 +149,7 @@ export async function checkAndDownloadUpdateInBackground(send) {
   }
 }
 
-import { execFile } from 'child_process';
+import { spawn } from 'child_process';
 
 /** Avvia l'installer già scaricato in modalità silenziosa (/S) e chiude WispCore per permettere l'aggiornamento automatico. */
 export function installDownloadedUpdate() {
@@ -159,10 +159,14 @@ export function installDownloadedUpdate() {
     throw new Error('Nessun aggiornamento scaricato pronto per l\'installazione.');
   }
 
-  // Esegue l'installer NSIS con lo switch /S per l'installazione silenziosa in background
-  execFile(info.installerPath, ['/S'], (err) => {
-    if (err) appendLog(`Impossibile avviare l'installer silenzioso: ${err.message}`);
+  // Esegue l'installer NSIS con lo switch /S (silenzioso) e --force-run (riavvia app).
+  // E' CRITICO usare spawn in modalità detached e unref() per slegare il processo
+  // dell'installer da WispCore, altrimenti app.quit() ucciderà l'installer prima che parta!
+  const child = spawn(info.installerPath, ['/S', '--force-run'], {
+    detached: true,
+    stdio: 'ignore'
   });
+  child.unref();
 
   // Piccolo ritardo prima che WispCore si chiuda e rilasci i file di sistema
   setTimeout(() => app.quit(), 1000);
